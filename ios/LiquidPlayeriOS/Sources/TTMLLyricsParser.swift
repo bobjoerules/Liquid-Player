@@ -29,7 +29,7 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
         let isRoman: Bool
     }
 
-    var lines: [LyricLine] = []
+    var vocalUnits: [VocalUnit] = []
     var songwriters: [String] = []
     var error: Error?
 
@@ -38,7 +38,157 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
     private var currentParagraph: ParagraphState?
 
     func result() -> ParsedLyrics {
-        var allLines = lines
+        var units = vocalUnits
+
+        // Final verification: if fewer than 2 lines have word sync in the entire song (and song has >= 2 lines),
+        // treat the whole song as line-synced to prevent false karaoke animation.
+        let allVocalLines = units.flatMap(\.allLines)
+        let wordSyncedCount = allVocalLines.filter { $0.isWordSynced && !$0.words.isEmpty && !$0.isSongwriter && !$0.isInterlude }.count
+        if wordSyncedCount < 2 && allVocalLines.count >= 2 {
+            let makeLineSynced: (LyricLine) -> LyricLine = { line in
+                if line.isSongwriter || line.isInterlude { return line }
+                return LyricLine(
+                    words: [],
+                    startMs: line.startMs,
+                    lineEndMs: line.endMs,
+                    isWordSynced: false,
+                    agent: line.agent,
+                    isBackground: line.isBackground,
+                    oppositeAligned: line.oppositeAligned,
+                    isSongwriter: false,
+                    isInterlude: false,
+                    interludeEndMs: -1,
+                    translation: line.translation,
+                    romanization: line.romanization,
+                    rawText: line.displayText
+                )
+            }
+
+            units = units.map { unit in
+                VocalUnit(
+                    leadLines: unit.leadLines.map(makeLineSynced),
+                    backgroundLines: unit.backgroundLines.map(makeLineSynced)
+                )
+            }
+        } else {
+            // For word-synced songs, ensure lines containing only a single word (e.g. ad-libs, "Yeah", short background lines)
+            // have a LyricWord token synthesized if missing, so they animate with the same karaoke effects as other lines.
+            let synthesizeSingleWordIfMissing: (LyricLine) -> LyricLine = { line in
+                if line.isSongwriter || line.isInterlude || line.isWordSynced || !line.words.isEmpty {
+                    return line
+                }
+                let tokens = line.displayText.split(whereSeparator: \.isWhitespace).map(String.init)
+                guard tokens.count == 1, let singleWord = tokens.first, !singleWord.isEmpty else {
+                    return line
+                }
+                let wStart = line.startMs
+                let wEnd = max(wStart + 500, line.endMs)
+                let duration = max(wEnd - wStart, 1)
+                let isLetterGroup = duration >= 1200 && singleWord.count > 1 && !singleWord.contains(" ")
+                let letters: [LyricLetter]
+                if isLetterGroup {
+                    let count = max(singleWord.count, 1)
+                    let letterDur = Double(duration) / Double(count)
+                    letters = singleWord.enumerated().map { off, char in
+                        LyricLetter(
+                            char: String(char),
+                            startMs: wStart + Int(Double(off) * letterDur),
+                            endMs: off == count - 1 ? wEnd : wStart + Int(Double(off + 1) * letterDur)
+                        )
+                    }
+                } else {
+                    letters = []
+                }
+                let word = LyricWord(
+                    text: singleWord,
+                    startMs: wStart,
+                    endMs: wEnd,
+                    isPartOfWord: false,
+                    isLetterGroup: isLetterGroup,
+                    letters: letters
+                )
+                return LyricLine(
+                    words: [word],
+                    startMs: wStart,
+                    lineEndMs: wEnd,
+                    isWordSynced: true,
+                    agent: line.agent,
+                    isBackground: line.isBackground,
+                    oppositeAligned: line.oppositeAligned,
+                    isSongwriter: false,
+                    isInterlude: false,
+                    interludeEndMs: -1,
+                    translation: line.translation,
+                    romanization: line.romanization,
+                    rawText: line.displayText
+                )
+            }
+
+            units = units.map { unit in
+                VocalUnit(
+                    leadLines: unit.leadLines.map(synthesizeSingleWordIfMissing),
+                    backgroundLines: unit.backgroundLines.map(synthesizeSingleWordIfMissing)
+                )
+            }
+        }
+
+        units.sort { $0.startMs < $1.startMs }
+
+        var allLines: [LyricLine] = []
+
+        // 1. Intro interlude
+        if let first = units.first, first.startMs >= 3000 {
+            let dotWords = createInterludeDotWords(startMs: 0, endMs: first.startMs)
+            let lead = first.leadLines.first
+            allLines.append(
+                LyricLine(
+                    words: dotWords,
+                    startMs: 0,
+                    agent: lead?.agent,
+                    isBackground: false,
+                    oppositeAligned: lead?.oppositeAligned ?? false,
+                    isSongwriter: false,
+                    isInterlude: true,
+                    interludeEndMs: first.startMs,
+                    translation: nil,
+                    romanization: nil
+                )
+            )
+        }
+
+        // 2. Units and inter-unit interludes
+        for index in 0..<units.count {
+            let unit = units[index]
+
+            // Always append all lines in this vocal unit together:
+            // lead line first, followed immediately by its background vocals!
+            allLines.append(contentsOf: unit.allLines)
+
+            if index < units.count - 1 {
+                let nextUnit = units[index + 1]
+                let gapStart = unit.endMs  // All vocals in current unit (lead + bg) have finished!
+                let gapEnd = nextUnit.startMs // Next vocal unit starts!
+
+                if gapEnd - gapStart >= 3000 {
+                    let dotWords = createInterludeDotWords(startMs: gapStart, endMs: gapEnd)
+                    let nextLead = nextUnit.leadLines.first
+                    allLines.append(
+                        LyricLine(
+                            words: dotWords,
+                            startMs: gapStart,
+                            agent: nextLead?.agent,
+                            isBackground: false,
+                            oppositeAligned: nextLead?.oppositeAligned ?? false,
+                            isSongwriter: false,
+                            isInterlude: true,
+                            interludeEndMs: gapEnd,
+                            translation: nil,
+                            romanization: nil
+                        )
+                    )
+                }
+            }
+        }
 
         if !songwriters.isEmpty {
             let lastLineEnd = allLines.map(\.endMs).max() ?? 0
@@ -71,79 +221,6 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
             )
         }
 
-        let mainLines = allLines
-            .filter { !$0.isBackground && !$0.isSongwriter }
-            .sorted { $0.startMs < $1.startMs }
-
-        var interludes: [LyricLine] = []
-        if let first = mainLines.first, first.startMs >= 3000 {
-            interludes.append(
-                LyricLine(
-                    words: [],
-                    startMs: 0,
-                    agent: nil,
-                    isBackground: false,
-                    oppositeAligned: false,
-                    isSongwriter: false,
-                    isInterlude: true,
-                    interludeEndMs: first.startMs,
-                    translation: nil,
-                    romanization: nil
-                )
-            )
-        }
-
-        if mainLines.count >= 2 {
-            for index in 0..<(mainLines.count - 1) {
-                let gapStart = mainLines[index].endMs
-                let gapEnd = mainLines[index + 1].startMs
-                if gapEnd - gapStart >= 3000 {
-                    interludes.append(
-                        LyricLine(
-                            words: [],
-                            startMs: gapStart,
-                            agent: nil,
-                            isBackground: false,
-                            oppositeAligned: false,
-                            isSongwriter: false,
-                            isInterlude: true,
-                            interludeEndMs: gapEnd,
-                            translation: nil,
-                            romanization: nil
-                        )
-                    )
-                }
-            }
-        }
-
-        allLines.append(contentsOf: interludes)
-        allLines.sort { $0.startMs < $1.startMs }
-
-        // Final verification: if fewer than 2 lines have word sync in the entire song (and song has >= 2 lines),
-        // treat the whole song as line-synced to prevent false karaoke animation.
-        let nonSpecialLines = allLines.filter { !$0.isSongwriter && !$0.isInterlude }
-        let wordSyncedCount = nonSpecialLines.filter { $0.isWordSynced && !$0.words.isEmpty }.count
-        if wordSyncedCount < 2 && nonSpecialLines.count >= 2 {
-            allLines = allLines.map { line in
-                if line.isSongwriter || line.isInterlude { return line }
-                return LyricLine(
-                    words: [],
-                    startMs: line.startMs,
-                    lineEndMs: line.endMs,
-                    isWordSynced: false,
-                    agent: line.agent,
-                    isBackground: line.isBackground,
-                    oppositeAligned: line.oppositeAligned,
-                    isSongwriter: false,
-                    isInterlude: false,
-                    interludeEndMs: -1,
-                    translation: line.translation,
-                    romanization: line.romanization,
-                    rawText: line.displayText
-                )
-            }
-        }
-
         return ParsedLyrics(lines: allLines, songwriters: songwriters)
     }
 
@@ -165,12 +242,16 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
             inSongwriter = true
         case "agent":
             let identifier = attributeDict["xml:id"] ?? attributeDict["id"]
-            if identifier == "v1" {
+            if identifier == "v1" || identifier == "1" {
+                defaultAgent = identifier
+            } else if defaultAgent == nil {
                 defaultAgent = identifier
             }
         case "p":
             let agent = attributeDict["agent"] ?? attributeDict["ttm:agent"]
-            if defaultAgent == nil, let agent {
+            if agent == "v1" || agent == "1" {
+                defaultAgent = agent
+            } else if defaultAgent == nil, let agent {
                 defaultAgent = agent
             }
             currentParagraph = ParagraphState(
@@ -216,7 +297,12 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
         case "p":
             if var paragraph = currentParagraph {
                 paragraph.flushPendingText()
-                lines.append(contentsOf: paragraph.makeLines())
+                let pLines = paragraph.makeLines()
+                let leadLines = pLines.filter { !$0.isBackground }
+                let bgLines = pLines.filter { $0.isBackground }
+                if !leadLines.isEmpty || !bgLines.isEmpty {
+                    vocalUnits.append(VocalUnit(leadLines: leadLines, backgroundLines: bgLines))
+                }
             }
             currentParagraph = nil
         default:
@@ -246,6 +332,7 @@ private struct ParagraphState {
     private var backgroundGroups: [LineDraft] = []
     private var currentBackgroundDraft: LineDraft?
     private var inBackgroundSpan = false
+    private var spanAgent: String?
     private var currentTranslation = ""
     private var currentRomanization = ""
     private var stack: [ParserDelegate.SpanContext]
@@ -263,6 +350,9 @@ private struct ParagraphState {
 
     mutating func pushSpan(attributes: [String: String]) {
         flushPendingText()
+        if let sa = attributes["agent"] ?? attributes["ttm:agent"] {
+            spanAgent = sa
+        }
         let inherited = stack.last ?? ParserDelegate.SpanContext(begin: beginMs, end: endMs, hasExplicitTiming: false, isBackground: false, isTranslation: false, isRoman: false)
         let hasExplicitTiming = (attributes["begin"] != nil)
         let begin = parseTimeMs(attributes["begin"]) ?? inherited.begin
@@ -379,7 +469,6 @@ private struct ParagraphState {
             return
         }
 
-        let startsWithSpace = rawText.first?.isWhitespace == true
         let endsWithSpace = rawText.last?.isWhitespace == true
         var trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -472,7 +561,11 @@ private struct ParagraphState {
     }
 
     func makeLines() -> [LyricLine] {
-        let oppositeAligned = agent != nil && defaultAgent != nil && agent != defaultAgent
+        let effectiveAgent = agent ?? spanAgent
+        let isExplicitOpposite = effectiveAgent == "v2" || effectiveAgent == "2"
+        let isDifferentAgent = effectiveAgent != nil && defaultAgent != nil && effectiveAgent != defaultAgent
+        let oppositeAligned = isExplicitOpposite || isDifferentAgent
+        let lineAgent = effectiveAgent ?? (oppositeAligned ? "v2" : "v1")
         var result: [LyricLine] = []
 
         for draft in leadLines {
@@ -487,9 +580,10 @@ private struct ParagraphState {
             let distinctStarts = words.count > 1 ? Set(words.map(\.startMs)).count > 1 : true
             let isWordSynced = draft.hasExplicitWordTiming && !words.isEmpty && distinctStarts && !isArtificialDivision
 
-            let effectiveRawText = !trimmedRaw.isEmpty ? trimmedRaw : words.map(\.text).joined(separator: " ")
-            let lineStart = isWordSynced ? (words.first?.startMs ?? beginMs) : beginMs
-            let lineEnd = isWordSynced ? (words.last?.endMs ?? endMs) : endMs
+            let normalizedRaw = trimmedRaw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            let effectiveRawText = !normalizedRaw.isEmpty ? normalizedRaw : words.map(\.text).joined(separator: " ")
+            let lineStart = max(0, isWordSynced ? (words.first?.startMs ?? beginMs) : beginMs)
+            let lineEnd = max(lineStart + 500, isWordSynced ? (words.last?.endMs ?? endMs) : endMs)
 
             result.append(
                 LyricLine(
@@ -497,7 +591,7 @@ private struct ParagraphState {
                     startMs: lineStart,
                     lineEndMs: lineEnd,
                     isWordSynced: isWordSynced,
-                    agent: agent,
+                    agent: lineAgent,
                     isBackground: false,
                     oppositeAligned: oppositeAligned,
                     isSongwriter: false,
@@ -530,9 +624,10 @@ private struct ParagraphState {
             let distinctStarts = words.count > 1 ? Set(words.map(\.startMs)).count > 1 : true
             let isWordSynced = draft.hasExplicitWordTiming && !words.isEmpty && distinctStarts && !isArtificialDivision
 
-            let effectiveRawText = !trimmedRaw.isEmpty ? trimmedRaw : words.map(\.text).joined(separator: " ")
-            let groupStart = isWordSynced ? (words.first?.startMs ?? beginMs) : beginMs
-            let groupEnd = isWordSynced ? (words.last?.endMs ?? endMs) : endMs
+            let normalizedBgRaw = trimmedRaw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            let effectiveRawText = !normalizedBgRaw.isEmpty ? normalizedBgRaw : words.map(\.text).joined(separator: " ")
+            let groupStart = max(0, isWordSynced ? (words.first?.startMs ?? beginMs) : beginMs)
+            let groupEnd = max(groupStart + 500, isWordSynced ? (words.last?.endMs ?? endMs) : endMs)
 
             result.append(
                 LyricLine(
@@ -540,7 +635,7 @@ private struct ParagraphState {
                     startMs: groupStart,
                     lineEndMs: groupEnd,
                     isWordSynced: isWordSynced,
-                    agent: agent,
+                    agent: lineAgent,
                     isBackground: true,
                     oppositeAligned: oppositeAligned,
                     isSongwriter: false,
@@ -607,7 +702,7 @@ private func parseTimeMs(_ time: String?) -> Int? {
     if parts.count == 1 {
         // Just seconds/fraction or a raw number
         if let val = Double(parts[0]) {
-            return Int((val * scale).rounded())
+            return max(0, Int((val * scale).rounded()))
         }
         return nil
     }
@@ -618,7 +713,7 @@ private func parseTimeMs(_ time: String?) -> Int? {
         let secondsParts = parts[1].split(separator: ".", maxSplits: 1).map(String.init)
         let seconds = Int(secondsParts[0]) ?? 0
         let milliseconds = secondsParts.count > 1 ? paddedMilliseconds(secondsParts[1]) : 0
-        return ((minutes * 60) + seconds) * 1000 + milliseconds
+        return max(0, ((minutes * 60) + seconds) * 1000 + milliseconds)
     }
 
     if parts.count == 3 {
@@ -628,7 +723,7 @@ private func parseTimeMs(_ time: String?) -> Int? {
         let secondsParts = parts[2].split(separator: ".", maxSplits: 1).map(String.init)
         let seconds = Int(secondsParts[0]) ?? 0
         let milliseconds = secondsParts.count > 1 ? paddedMilliseconds(secondsParts[1]) : 0
-        return ((hours * 3600) + (minutes * 60) + seconds) * 1000 + milliseconds
+        return max(0, ((hours * 3600) + (minutes * 60) + seconds) * 1000 + milliseconds)
     }
 
     return nil

@@ -14,12 +14,29 @@ on:
         options:
           - ipa
           - simulator-app
+          - both
+      create_release:
+        description: "Create or update GitHub Release with the output"
+        required: false
+        type: boolean
+        default: true
+      tag_name:
+        description: "Release tag (e.g. 1.0.0-Beta or v1.0.0). Defaults to current tag, release tag, or project version."
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+    tags:
+      - '*'
+  release:
+    types: [published]
 
 jobs:
   ios:
     runs-on: macos-latest
     permissions:
-      contents: read
+      contents: write
 
     env:
       IOS_SCHEME: LiquidPlayeriOS
@@ -28,6 +45,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -37,7 +56,7 @@ jobs:
         run: xcodegen generate --spec project.yml
 
       - name: Build simulator app
-        if: ${{ inputs.ios_export == 'simulator-app' }}
+        if: ${{ inputs.ios_export == 'simulator-app' || inputs.ios_export == 'both' }}
         run: |
           set -o pipefail
           xcodebuild \
@@ -50,7 +69,7 @@ jobs:
             build 2>&1 | tee "$RUNNER_TEMP/xcodebuild-ios.log"
 
       - name: Build unsigned device app
-        if: ${{ inputs.ios_export == 'ipa' }}
+        if: ${{ (inputs.ios_export || 'ipa') != 'simulator-app' }}
         run: |
           set -o pipefail
           xcodebuild \
@@ -65,7 +84,7 @@ jobs:
             build 2>&1 | tee "$RUNNER_TEMP/xcodebuild-ios.log"
 
       - name: Package simulator app
-        if: ${{ inputs.ios_export == 'simulator-app' }}
+        if: ${{ inputs.ios_export == 'simulator-app' || inputs.ios_export == 'both' }}
         run: |
           APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -path "*Build/Products/Release-iphonesimulator/Liquid Player.app" -print -quit)
           if [ -z "$APP_PATH" ]; then
@@ -76,7 +95,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" artifacts/liquid-player-ios-simulator-app.zip
 
       - name: Package unsigned IPA
-        if: ${{ inputs.ios_export == 'ipa' }}
+        if: ${{ (inputs.ios_export || 'ipa') != 'simulator-app' }}
         run: |
           APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -path "*Build/Products/Release-iphoneos/Liquid Player.app" -print -quit)
           if [ -z "$APP_PATH" ]; then
@@ -89,14 +108,14 @@ jobs:
           zip -r liquid-player.ipa Payload
 
       - name: Upload IPA artifact
-        if: ${{ inputs.ios_export == 'ipa' }}
+        if: ${{ (inputs.ios_export || 'ipa') != 'simulator-app' }}
         uses: actions/upload-artifact@v4
         with:
           name: liquid-player-ipa
           path: artifacts/liquid-player.ipa
 
       - name: Upload simulator app
-        if: ${{ inputs.ios_export == 'simulator-app' }}
+        if: ${{ inputs.ios_export == 'simulator-app' || inputs.ios_export == 'both' }}
         uses: actions/upload-artifact@v4
         with:
           name: liquid-player-ios-simulator-app
@@ -108,3 +127,46 @@ jobs:
         with:
           name: ios-build-log
           path: ${{ runner.temp }}/xcodebuild-ios.log
+
+      - name: Determine Release Tag
+        id: release_info
+        if: ${{ inputs.create_release != false }}
+        env:
+          INPUT_TAG: ${{ inputs.tag_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          TAG=""
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [ "$EVENT_NAME" = "release" ]; then
+            TAG="$RELEASE_TAG"
+          elif [ "$REF_TYPE" = "tag" ]; then
+            TAG="$REF_NAME"
+          else
+            TAG=$(git tag --points-at HEAD | head -n 1)
+            if [ -z "$TAG" ]; then
+              VERSION=$(grep 'MARKETING_VERSION:' ios/project.yml | head -n 1 | awk '{print $2}')
+              if [ -n "$VERSION" ]; then
+                TAG="v$VERSION"
+              fi
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: $TAG"
+
+      - name: Create or Update GitHub Release
+        if: ${{ steps.release_info.outputs.tag != '' && inputs.create_release != false }}
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            artifacts/liquid-player.ipa
+            artifacts/liquid-player-ios-simulator-app.zip
+          fail_on_unmatched_files: false
+          generate_release_notes: true

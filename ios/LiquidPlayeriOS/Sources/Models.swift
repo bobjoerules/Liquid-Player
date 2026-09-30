@@ -152,6 +152,37 @@ struct LyricLine: Identifiable, Hashable {
     }
 }
 
+struct VocalUnit {
+    var leadLines: [LyricLine]
+    var backgroundLines: [LyricLine]
+
+    var allLines: [LyricLine] {
+        leadLines + backgroundLines
+    }
+
+    var startMs: Int {
+        allLines.map(\.startMs).min() ?? 0
+    }
+
+    var endMs: Int {
+        allLines.map(\.endMs).max() ?? 0
+    }
+}
+
+func createInterludeDotWords(startMs: Int, endMs: Int) -> [LyricWord] {
+    let total = endMs - startMs
+    let base = Double(total) / 3.0
+    let firstEnd = max(startMs, startMs + Int(base - 550.0 / 3.0))
+    let secondEnd = max(firstEnd, startMs + Int(base * 2.0 - (550.0 * 2.0) / 3.0))
+    let thirdEnd = max(secondEnd, endMs - 550)
+
+    return [
+        LyricWord(text: "•", startMs: startMs, endMs: firstEnd, isPartOfWord: false, isLetterGroup: false, letters: []),
+        LyricWord(text: "•", startMs: firstEnd, endMs: secondEnd, isPartOfWord: false, isLetterGroup: false, letters: []),
+        LyricWord(text: "•", startMs: secondEnd, endMs: thirdEnd, isPartOfWord: false, isLetterGroup: false, letters: [])
+    ]
+}
+
 struct SpicyAttributionUser: Hashable {
     let id: String?
     let username: String?
@@ -179,7 +210,7 @@ struct ParsedLyrics {
 
     var hasWordSyncedLyrics: Bool {
         let wordSyncedLines = lines.filter {
-            $0.isWordSynced && $0.words.count > 1 && !$0.isInterlude && !$0.isSongwriter
+            $0.isWordSynced && !$0.words.isEmpty && !$0.isInterlude && !$0.isSongwriter
         }
         return wordSyncedLines.count >= 2
     }
@@ -296,12 +327,13 @@ struct LibrarySong: Identifiable, Codable, Equatable {
         Date().timeIntervalSince(lastPlayedAt) < 30 * 24 * 3600
     }
 
-    // Has saved TTML
+    // Has saved TTML — true if content is in-memory OR if we have a recorded save date
+    // (meaning the .ttml file lives on disk even if ttmlContent was stripped from the index).
     var hasTTML: Bool {
-        guard let content = ttmlContent, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return false
+        if let content = ttmlContent, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
         }
-        return true
+        return ttmlSavedAt != nil
     }
 
     // Explicitly verified to have no lyrics (instrumental or unindexed)

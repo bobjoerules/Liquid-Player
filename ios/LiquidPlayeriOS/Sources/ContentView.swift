@@ -44,43 +44,131 @@ struct ContentView: View {
     @State private var dragValue: Double = 0.0
     @State private var selectedTab: AppTab = .nowPlaying
     @State private var libraryFilter: LibraryFilter = .all
+    @Namespace private var libraryFilterNamespace
     @State private var librarySearchText = ""
     @State private var viewingTTMLSong: LibrarySong? = nil
     @State private var isShowingQueue = false
     @State private var isUserScrollingLyrics = false
     @State private var userScrollResumeTask: Task<Void, Never>? = nil
+    @State private var isAppLoading: Bool = true
+    @State private var logoScale: CGFloat = 0.85
+    @State private var logoOpacity: Double = 0.0
 
     private var displayedTimeMs: Int {
         return max(0, viewModel.currentTimeMs + viewModel.lyricOffsetMs)
     }
 
     var body: some View {
-        mainContent
-            .sheet(isPresented: $isShowingQueue) {
-                QueueView(viewModel: viewModel)
-            }
-            .sheet(item: $viewingTTMLSong) { song in
-                TTMLViewerSheet(song: song)
-            }
-            .background {
-                Button("") {
-                    viewModel.togglePlayback()
+        ZStack {
+            mainContent
+                .sheet(isPresented: $isShowingQueue) {
+                    QueueView(viewModel: viewModel)
                 }
-                .keyboardShortcut(.space, modifiers: [])
-                .opacity(0)
-                .allowsHitTesting(false)
+                .sheet(item: $viewingTTMLSong) { song in
+                    TTMLViewerSheet(song: song)
+                }
+                .background {
+                    Button("") {
+                        viewModel.togglePlayback()
+                    }
+                    .keyboardShortcut(.space, modifiers: [])
+                    .opacity(0)
+                    .allowsHitTesting(false)
+                }
+                .onChange(of: isFullScreenNowPlaying) { _, isFS in
+                    if !isFS {
+                        isFullScreenControlsHidden = false
+                    }
+                }
+
+            if isAppLoading {
+                appLoadingView
             }
-            .onChange(of: isFullScreenNowPlaying) { _, isFS in
-                if !isFS {
-                    isFullScreenControlsHidden = false
+        }
+        .task {
+            withAnimation(.easeOut(duration: 0.55)) {
+                logoScale = 1.0
+                logoOpacity = 1.0
+            }
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            withAnimation(.easeInOut(duration: 0.45)) {
+                isAppLoading = false
+            }
+        }
+    }
+
+    // MARK: - App Loading Splash View
+    private var appLoadingView: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            VStack(spacing: 24) {
+                #if canImport(UIKit)
+                if let uiImage = UIImage(named: "AppLogo") {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: isMac ? 130 : 108, height: isMac ? 130 : 108)
+                        .clipShape(RoundedRectangle(cornerRadius: isMac ? 30 : 25, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: isMac ? 30 : 25, style: .continuous)
+                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(0.6), radius: 24, y: 12)
+                        .shadow(color: Color.white.opacity(0.12), radius: 28, y: 0)
+                        .scaleEffect(logoScale)
+                        .opacity(logoOpacity)
+                } else {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 54, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 108, height: 108)
+                        .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 25, style: .continuous))
+                        .scaleEffect(logoScale)
+                        .opacity(logoOpacity)
+                }
+                #else
+                Image("AppLogo")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 120, height: 120)
+                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.6), radius: 24, y: 12)
+                    .shadow(color: Color.white.opacity(0.12), radius: 28, y: 0)
+                    .scaleEffect(logoScale)
+                    .opacity(logoOpacity)
+                #endif
+
+                VStack(spacing: 8) {
+                    Text("Liquid Player")
+                        .font(.system(size: isMac ? 26 : 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .opacity(logoOpacity)
+
+                    ProgressView()
+                        .tint(.white.opacity(0.7))
+                        .scaleEffect(0.9)
+                        .opacity(logoOpacity)
                 }
             }
+        }
+        .transition(.asymmetric(
+            insertion: .identity,
+            removal: .opacity.combined(with: .scale(scale: 1.05))
+        ))
+        .zIndex(100)
     }
 
     private var mainContent: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             #if canImport(UIKit)
-            AnimatedArtworkBackground(artwork: viewModel.artwork)
+            PlayerBackgroundView(style: viewModel.backgroundStyle, artwork: viewModel.artwork)
+                .animation(.easeInOut(duration: 0.35), value: viewModel.backgroundStyle)
             #else
             Color.black.ignoresSafeArea()
             #endif
@@ -181,11 +269,11 @@ struct ContentView: View {
                     }
 
                     VStack(spacing: 8) {
-                        Text("No Spotify Track Active")
+                        Text(viewModel.spotifyService.isAuthenticated ? "Connected to Spotify" : "No Spotify Track Active")
                             .font(.system(size: 24, weight: .bold))
                             .foregroundStyle(.white)
 
-                        Text("Play a track on Spotify or connect your account to start live syllable synchronization.")
+                        Text(viewModel.spotifyService.isAuthenticated ? "Play any song on Spotify to start live syllable synchronization, or pick a track from your Library." : "Play a track on Spotify or connect your account to start live syllable synchronization.")
                             .font(.system(size: 15, weight: .regular))
                             .foregroundStyle(.white.opacity(0.6))
                             .multilineTextAlignment(.center)
@@ -264,38 +352,8 @@ struct ContentView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 16) {
                 // Header: Apple Music Large Title & Actions
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Library")
-                            .font(.system(size: isMac ? 38 : 34, weight: .bold))
-                            .foregroundStyle(.white)
-
-                        Text("Played in last 30 days")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.5))
-                    }
-
-                    Spacer()
-
-                    Button {
-                        viewModel.shufflePlayLibrary()
-                        selectedTab = .nowPlaying
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "shuffle")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text("Shuffle")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(Color.white.opacity(0.12), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(filteredLibrarySongs.isEmpty)
-                }
-                .padding(.top, 8)
+                topBar(title: "Library", subtitle: "Played in last 30 days")
+                    .padding(.top, 8)
 
                 // Outdated TTML Notice (Only shown if songs actually need update!)
                 if !libraryManager.songsNeedingTTMLUpdate.isEmpty {
@@ -341,15 +399,31 @@ struct ContentView: View {
                     .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
 
-                // Apple-style Segmented Filter
-                Picker("Filter", selection: $libraryFilter) {
-                    Text("All (\(libraryManager.songsPlayedInLast30Days.count))").tag(LibraryFilter.all)
-                    Text("Saved TTML (\(libraryManager.songsWithValidTTML.count))").tag(LibraryFilter.saved)
+                // Apple-style Filter Tabs (Taller Touch Target & Modern Glass Style)
+                HStack(spacing: 4) {
+                    libraryFilterTab(
+                        title: "All",
+                        count: libraryManager.songsPlayedInLast30Days.count,
+                        filter: .all
+                    )
+
+                    libraryFilterTab(
+                        title: "Saved TTML",
+                        count: libraryManager.songsWithValidTTML.count,
+                        filter: .saved
+                    )
+
                     if !libraryManager.songsNeedingTTMLUpdate.isEmpty {
-                        Text("Needs Update (\(libraryManager.songsNeedingTTMLUpdate.count))").tag(LibraryFilter.needsUpdate)
+                        libraryFilterTab(
+                            title: "Needs Update",
+                            count: libraryManager.songsNeedingTTMLUpdate.count,
+                            filter: .needsUpdate,
+                            badgeColor: .orange
+                        )
                     }
                 }
-                .pickerStyle(.segmented)
+                .padding(4)
+                .modifier(LibraryFilterContainerGlassModifier())
 
                 // Search field
                 HStack(spacing: 8) {
@@ -426,6 +500,58 @@ struct ContentView: View {
         }
     }
 
+    private func libraryFilterTab(
+        title: String,
+        count: Int,
+        filter: LibraryFilter,
+        badgeColor: Color? = nil
+    ) -> some View {
+        let isSelected = libraryFilter == filter
+
+        return Button {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                libraryFilter = filter
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(isSelected ? .white : .white.opacity(0.6))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(
+                        badgeColor != nil
+                            ? badgeColor!
+                            : (isSelected ? .white : .white.opacity(0.55))
+                    )
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? Color.white.opacity(0.20) : Color.white.opacity(0.08))
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(isSelected ? 0.25 : 0.10), lineWidth: 0.8)
+                            )
+                    )
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 42)
+            .background {
+                if isSelected {
+                    Color.clear
+                        .modifier(LibraryFilterActiveTabGlassModifier())
+                        .matchedGeometryEffect(id: "activeLibraryFilterTab", in: libraryFilterNamespace)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var filteredLibrarySongs: [LibrarySong] {
         let base: [LibrarySong]
         switch libraryFilter {
@@ -493,15 +619,23 @@ struct ContentView: View {
     }
 
     // MARK: - Top Bar
-    private func topBar(title: String) -> some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 4) {
+    private func topBar<Trailing: View>(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder trailing: () -> Trailing = { EmptyView() }
+    ) -> some View {
+        HStack(alignment: subtitle != nil ? .firstTextBaseline : .center) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: isMac ? 48 : 36, weight: .semibold))
+                    .font(.system(size: isMac ? 38 : 34, weight: .bold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
 
-                if let errorMessage = viewModel.errorMessage {
+                if let subtitle = subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                } else if let errorMessage = viewModel.errorMessage {
                     Text(errorMessage)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Color(red: 1.0, green: 0.72, blue: 0.67))
@@ -512,6 +646,8 @@ struct ContentView: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
+                trailing()
+
                 if title == "Now Playing", viewModel.selectedTrackID != nil {
                     Button {
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
@@ -523,21 +659,30 @@ struct ContentView: View {
                             .foregroundStyle(.white)
                             .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
                             .modifier(MiniPlayerButtonBackgroundModifier())
+                            .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(LiquidScaleButtonStyle())
                 }
             }
         }
     }
 
     private var syncSection: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             syncButton(title: "-100") {
                 viewModel.adjustLyricOffset(by: -100)
             }
 
+            syncButton(title: "-50") {
+                viewModel.adjustLyricOffset(by: -50)
+            }
+
             syncButton(title: "Reset") {
                 viewModel.resetLyricOffset()
+            }
+
+            syncButton(title: "+50") {
+                viewModel.adjustLyricOffset(by: 50)
             }
 
             syncButton(title: "+100") {
@@ -630,9 +775,7 @@ struct ContentView: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    Task {
-                        await viewModel.playNextTrack()
-                    }
+                    viewModel.playNextTrack()
                 } label: {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 16, weight: .semibold))
@@ -745,7 +888,11 @@ struct ContentView: View {
                 }
 
                 ScrollView(showsIndicators: false) {
-                    LazyVStack(spacing: 0) {
+                    let activeID: UUID? = viewModel.activeLineID(for: displayedTimeMs)
+                    let activeIndex: Int = viewModel.lines.firstIndex { $0.id == activeID } ?? -1
+                    let lyricLines: [LyricLine] = viewModel.lines.filter { !$0.isSongwriter }
+
+                    VStack(spacing: 0) {
                         if viewModel.isLoadingLyrics {
                             VStack(spacing: 12) {
                                 ProgressView()
@@ -759,10 +906,6 @@ struct ContentView: View {
                         } else if viewModel.lines.isEmpty {
                             Spacer(minLength: 0)
                         } else {
-                            let activeID: UUID? = viewModel.activeLineID(for: displayedTimeMs)
-                            let activeIndex: Int = viewModel.lines.firstIndex { $0.id == activeID } ?? -1
-                            let lyricLines: [LyricLine] = viewModel.lines.filter { !$0.isSongwriter }
-
                             ForEach(Array(lyricLines.enumerated()), id: \.element.id) { index, line in
                                 lyricLineRow(
                                     line: line,
@@ -781,7 +924,9 @@ struct ContentView: View {
                             .padding(.bottom, 64)
                         }
                     }
-                    .padding(.vertical, 26)
+                    .padding(.top, isFullScreen ? 64 : 52)
+                    .padding(.bottom, 36)
+                    .animation(.spring(response: 0.52, dampingFraction: 0.88), value: activeID)
                 }
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 4)
@@ -806,8 +951,8 @@ struct ContentView: View {
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0),
-                        .init(color: .black, location: 0.12),
-                        .init(color: .black, location: 0.88),
+                        .init(color: .black, location: 0.025),
+                        .init(color: .black, location: 0.94),
                         .init(color: .clear, location: 1)
                     ],
                     startPoint: .top,
@@ -874,7 +1019,10 @@ struct ContentView: View {
                 isUserScrollingLyrics = false
                 userScrollResumeTask?.cancel()
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 60_000_000)
+                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? viewModel.lines.first?.id {
+                        proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
+                    }
+                    try? await Task.sleep(nanoseconds: 80_000_000)
                     if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? viewModel.lines.first?.id {
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                             proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
@@ -886,7 +1034,10 @@ struct ContentView: View {
                 isUserScrollingLyrics = false
                 guard !newIds.isEmpty else { return }
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 60_000_000)
+                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? newIds.first {
+                        proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
+                    }
+                    try? await Task.sleep(nanoseconds: 80_000_000)
                     if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? newIds.first {
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                             proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
@@ -897,7 +1048,6 @@ struct ContentView: View {
             .onAppear {
                 isUserScrollingLyrics = false
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 60_000_000)
                     if let activeID = viewModel.activeLineID(for: displayedTimeMs) ?? viewModel.lines.first?.id {
                         proxy.scrollTo(activeID, anchor: lyricsScrollAnchor(for: activeID))
                     }
@@ -913,9 +1063,9 @@ struct ContentView: View {
             return .center
         }
         if index == 0 {
-            return UnitPoint(x: 0.5, y: 0.18)
+            return UnitPoint(x: 0.5, y: isFullScreenNowPlaying ? 0.28 : 0.24)
         } else if index == 1 {
-            return UnitPoint(x: 0.5, y: 0.32)
+            return UnitPoint(x: 0.5, y: isFullScreenNowPlaying ? 0.32 : 0.36)
         } else {
             return .center
         }
@@ -930,10 +1080,11 @@ struct ContentView: View {
     ) -> some View {
         let effectiveEnd: Int = max(line.endMs, line.words.last?.endMs ?? line.startMs)
         let isTimeActive: Bool = (line.startMs <= displayedTimeMs && displayedTimeMs <= effectiveEnd)
-        let isActive: Bool = isTimeActive || (line.id == activeID)
-        let isPast: Bool = !isActive && (displayedTimeMs > effectiveEnd)
+        let isPast: Bool = (displayedTimeMs > effectiveEnd)
+        let isActive: Bool = isTimeActive
         let distance: Int = activeIndex >= 0 ? (index - activeIndex) : 0
         let lineTimeMs: Int = (isActive || line.isInterlude) ? displayedTimeMs : (isPast ? line.endMs : 0)
+        let lineColor: Color = viewModel.colorForLine(index: index, agent: line.agent, oppositeAligned: line.oppositeAligned)
 
         SpicyLyricLineView(
             line: line,
@@ -944,6 +1095,11 @@ struct ContentView: View {
             isRomanizationEnabled: viewModel.isRomanizationEnabled,
             isTranslationEnabled: viewModel.isTranslationEnabled,
             isUserScrolling: isUserScrollingLyrics,
+            fontDesign: viewModel.lyricsFontDesign.fontDesign,
+            fontSize: viewModel.lyricsFontSize.leadSize,
+            isGlowEnabled: viewModel.isLyricsGlowEnabled,
+            isBounceEnabled: viewModel.isLyricsBounceEnabled,
+            activeColor: lineColor,
             onSeek: { seekMs in
                 userScrollResumeTask?.cancel()
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
@@ -983,9 +1139,7 @@ struct ContentView: View {
             // Centered controls
             HStack(spacing: 24) {
                 controlButton(systemName: "backward.fill") {
-                    Task {
-                        await viewModel.playPreviousTrack()
-                    }
+                    viewModel.playPreviousTrack()
                 }
 
                 Button(action: viewModel.togglePlayback) {
@@ -998,9 +1152,7 @@ struct ContentView: View {
                 .buttonStyle(.plain)
 
                 controlButton(systemName: "forward.fill") {
-                    Task {
-                        await viewModel.playNextTrack()
-                    }
+                    viewModel.playNextTrack()
                 }
             }
         }
@@ -1064,151 +1216,152 @@ struct ContentView: View {
     }
 
     private var fullScreenNowPlayingView: some View {
-        ZStack {
-            Color.black.opacity(0.001)
-                .ignoresSafeArea()
+        VStack(spacing: isFullScreenControlsHidden ? 12 : 20) {
+            // Header with dismiss button and title
+            if !isFullScreenControlsHidden {
+                HStack {
+                    Button {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                            isFullScreenNowPlaying = false
+                            isFullScreenControlsHidden = false
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: isMac ? 17 : 15, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
+                            .modifier(MiniPlayerButtonBackgroundModifier())
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(LiquidScaleButtonStyle())
+
+                    Spacer()
+
+                    Text("Now Playing")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.8))
+
+                    Spacer()
+
+                    Color.clear
+                        .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        isFullScreenControlsHidden.toggle()
+                    }
+                }
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .move(edge: .top)),
+                    removal: .opacity.combined(with: .move(edge: .top))
+                ))
+            }
+
+            if viewModel.selectedTrackID != nil && viewModel.lines.isEmpty && !viewModel.isLoadingLyrics {
+                VStack(spacing: 28) {
+                    Spacer()
+
+                    dynamicArtworkView(size: isMac ? 340 : 280)
+                        .shadow(color: .black.opacity(0.35), radius: 20, x: 0, y: 12)
+
+                    VStack(spacing: 8) {
+                        MarqueeText(
+                            text: viewModel.nowPlayingTitle,
+                            font: .system(size: isMac ? 32 : 26, weight: .bold),
+                            color: .white,
+                            alignment: .center
+                        )
+                        .padding(.horizontal, 32)
+
+                        MarqueeText(
+                            text: viewModel.authorMetadata,
+                            font: .system(size: isMac ? 19 : 16, weight: .semibold),
+                            color: .white.opacity(0.6),
+                            alignment: .center
+                        )
+                        .padding(.horizontal, 32)
+                    }
+
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
                 .onTapGesture {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                         isFullScreenControlsHidden.toggle()
                     }
                 }
 
-            VStack(spacing: isFullScreenControlsHidden ? 12 : 20) {
-                // Header with dismiss button and title
-                if !isFullScreenControlsHidden {
-                    HStack {
-                        Button {
-                            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                                isFullScreenNowPlaying = false
-                                isFullScreenControlsHidden = false
-                            }
-                        } label: {
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(12)
-                                .background(.white.opacity(0.12), in: Circle())
-                        }
-                        .buttonStyle(.plain)
-
-                        Spacer()
-
-                        Text("Now Playing")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.8))
-
-                        Spacer()
-
-                        Color.clear
-                            .frame(width: 44, height: 44)
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 16)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            isFullScreenControlsHidden.toggle()
-                        }
-                    }
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .move(edge: .top)),
-                        removal: .opacity.combined(with: .move(edge: .top))
-                    ))
-                }
-
-                if viewModel.selectedTrackID != nil && viewModel.lines.isEmpty && !viewModel.isLoadingLyrics {
-                    Spacer()
-
-                    VStack(spacing: 28) {
-                        dynamicArtworkView(size: isMac ? 340 : 280)
-                            .shadow(color: .black.opacity(0.35), radius: 20, x: 0, y: 12)
-
-                        VStack(spacing: 8) {
-                            MarqueeText(
-                                text: viewModel.nowPlayingTitle,
-                                font: .system(size: isMac ? 32 : 26, weight: .bold),
-                                color: .white,
-                                alignment: .center
-                            )
-                            .padding(.horizontal, 32)
-
-                            MarqueeText(
-                                text: viewModel.authorMetadata,
-                                font: .system(size: isMac ? 19 : 16, weight: .semibold),
-                                color: .white.opacity(0.6),
-                                alignment: .center
-                            )
-                            .padding(.horizontal, 32)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            isFullScreenControlsHidden.toggle()
-                        }
-                    }
-
-                    Spacer()
-
-                    VStack(spacing: 24) {
-                        timelineSeekBar
-                        if !isFullScreenControlsHidden {
-                            controls
-                                .transition(.asymmetric(
-                                    insertion: .opacity.combined(with: .move(edge: .bottom)),
-                                    removal: .opacity.combined(with: .move(edge: .bottom))
-                                ))
-                        }
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, isFullScreenControlsHidden ? 32 : 36)
-                } else {
-                    HStack(spacing: 20) {
-                        largeArtworkView
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            MarqueeText(
-                                text: viewModel.nowPlayingTitle,
-                                font: .system(size: 24, weight: .bold),
-                                color: .white
-                            )
-
-                            MarqueeText(
-                                text: viewModel.authorMetadata,
-                                font: .system(size: 15, weight: .medium),
-                                color: .white.opacity(0.6)
-                            )
-                        }
-                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, isFullScreenControlsHidden ? 16 : 0)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            isFullScreenControlsHidden.toggle()
-                        }
-                    }
-
-                    lyricsPanel(isFullScreen: true)
-
+                VStack(spacing: 24) {
                     timelineSeekBar
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, isFullScreenControlsHidden ? 30 : 0)
-
                     if !isFullScreenControlsHidden {
                         controls
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 24)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .move(edge: .bottom)),
                                 removal: .opacity.combined(with: .move(edge: .bottom))
                             ))
                     }
                 }
+                .padding(.horizontal, 24)
+                .padding(.bottom, isFullScreenControlsHidden ? 32 : 36)
+                .contentShape(Rectangle())
+            } else {
+                HStack(spacing: 20) {
+                    largeArtworkView
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        MarqueeText(
+                            text: viewModel.nowPlayingTitle,
+                            font: .system(size: 24, weight: .bold),
+                            color: .white
+                        )
+
+                        MarqueeText(
+                            text: viewModel.authorMetadata,
+                            font: .system(size: 15, weight: .medium),
+                            color: .white.opacity(0.6)
+                        )
+                    }
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, isFullScreenControlsHidden ? 16 : 0)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        isFullScreenControlsHidden.toggle()
+                    }
+                }
+
+                lyricsPanel(isFullScreen: true)
+                    .background(
+                        Color.black.opacity(0.001)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                    isFullScreenControlsHidden.toggle()
+                                }
+                            }
+                    )
+
+                VStack(spacing: 20) {
+                    timelineSeekBar
+                    if !isFullScreenControlsHidden {
+                        controls
+                            .transition(.asymmetric(
+                                insertion: .opacity.combined(with: .move(edge: .bottom)),
+                                removal: .opacity.combined(with: .move(edge: .bottom))
+                            ))
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, isFullScreenControlsHidden ? 30 : 24)
+                .contentShape(Rectangle())
             }
         }
     }
@@ -1373,6 +1526,7 @@ struct ContentView: View {
 
             VStack(spacing: 16) {
                 Button {
+                    hasCompletedIntro = true
                     viewModel.spotifyService.login()
                 } label: {
                     HStack(spacing: 10) {
@@ -1603,6 +1757,93 @@ private struct SpotifyTrackListRow: View {
 
 
 
+
+#if canImport(UIKit)
+private struct PlayerBackgroundView: View {
+    let style: PlayerBackgroundStyle
+    let artwork: UIImage?
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            ZStack {
+                switch style {
+                case .black:
+                    Color.black
+
+                case .blurred:
+                    ZStack {
+                        Color(red: 0.07, green: 0.07, blue: 0.09)
+
+                        if let artwork {
+                            Image(uiImage: artwork)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: size.width, height: size.height)
+                                .scaleEffect(1.15)
+                                .blur(radius: 65)
+                                .opacity(0.50)
+                                .clipped()
+                        } else {
+                            LinearGradient(
+                                colors: [Color(red: 0.10, green: 0.10, blue: 0.14), Color.black],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        }
+
+                        Rectangle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.black.opacity(0.35), Color.black.opacity(0.85)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                    }
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+
+                case .gradient:
+                    ZStack {
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.11, green: 0.13, blue: 0.18),
+                                Color(red: 0.16, green: 0.10, blue: 0.14),
+                                Color(red: 0.06, green: 0.07, blue: 0.09)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+
+                        if let artwork {
+                            Image(uiImage: artwork)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: size.width, height: size.height)
+                                .scaleEffect(1.15)
+                                .blur(radius: 65)
+                                .opacity(0.24)
+                                .clipped()
+                        }
+
+                        Rectangle()
+                            .fill(Color.black.opacity(0.65))
+                    }
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+
+                case .moving:
+                    AnimatedArtworkBackground(artwork: artwork)
+                }
+            }
+            .frame(width: size.width, height: size.height)
+            .clipped()
+        }
+        .ignoresSafeArea()
+    }
+}
+#endif
 
 private struct AnimatedArtworkBackground: View {
     let artwork: UIImage?
@@ -1842,12 +2083,15 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Spotify Connection") {
+            Section(
+                header: Text("Spotify Connection"),
+                footer: Text("Playback stays on the device you were listening to when unpausing.")
+            ) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Account Status")
                             .font(.system(size: 15, weight: .semibold))
-                        Text(viewModel.spotifyService.isAuthenticated ? "Connected (\(viewModel.spotifyService.activeDeviceName ?? "Active Device"))" : "Not Connected")
+                        Text(viewModel.spotifyService.isAuthenticated ? "Connected" : "Not Connected")
                             .font(.system(size: 13))
                             .foregroundStyle(viewModel.spotifyService.isAuthenticated ? Color(red: 0.11, green: 0.85, blue: 0.45) : .secondary)
                     }
@@ -1867,6 +2111,254 @@ struct SettingsView: View {
                         .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
                     }
                 }
+
+                if viewModel.spotifyService.isAuthenticated && !viewModel.spotifyService.availableDevices.isEmpty {
+                    Menu {
+                        ForEach(viewModel.spotifyService.availableDevices) { device in
+                            Button {
+                                if let devId = device.id {
+                                    Task {
+                                        await viewModel.spotifyService.transferPlayback(to: devId)
+                                    }
+                                }
+                            } label: {
+                                HStack {
+                                    Text(device.name)
+                                    if device.name == viewModel.spotifyService.activeDeviceName || (device.id != nil && device.id == viewModel.spotifyService.lastActiveDeviceId) {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Label("Device", systemImage: "speaker.wave.2")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text(viewModel.spotifyService.activeDeviceName ?? "Active Device")
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            Section("Appearance") {
+                Picker("Background", selection: $viewModel.backgroundStyle) {
+                    ForEach(PlayerBackgroundStyle.allCases) { style in
+                        Text(style.rawValue).tag(style)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Picker("Font Style", selection: $viewModel.lyricsFontDesign) {
+                    ForEach(LyricsFontDesign.allCases) { design in
+                        Text(design.rawValue).tag(design)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Picker("Text Size", selection: $viewModel.lyricsFontSize) {
+                    ForEach(LyricsFontSize.allCases) { size in
+                        Text(size.rawValue).tag(size)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Toggle("Active Lyric Glow", isOn: $viewModel.isLyricsGlowEnabled)
+                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
+                Toggle("Lyric Bounce", isOn: $viewModel.isLyricsBounceEnabled)
+                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Lyric Color")
+                        Spacer()
+                        if viewModel.isRainbowColorMode {
+                            Text("Rainbow")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: LyricColorPreset.rainbowColors,
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Color.white.opacity(0.10)))
+                        }
+                        HexColorPicker(
+                            hex: Binding(
+                                get: { viewModel.isRainbowColorMode ? "#FF4B72" : viewModel.lyricsColorHex },
+                                set: { viewModel.lyricsColorHex = $0 }
+                            ),
+                            fallbackHex: "#FFFFFF"
+                        )
+                    }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(LyricColorPreset.presets) { preset in
+                                let isSelected = viewModel.lyricsColorHex.uppercased() == preset.hex.uppercased()
+                                Button {
+                                    viewModel.lyricsColorHex = preset.hex
+                                } label: {
+                                    Group {
+                                        if preset.isRainbow {
+                                            Circle()
+                                                .fill(
+                                                    AngularGradient(
+                                                        colors: LyricColorPreset.rainbowColors + [LyricColorPreset.rainbowColors[0]],
+                                                        center: .center
+                                                    )
+                                                )
+                                        } else {
+                                            Circle()
+                                                .fill(preset.color)
+                                        }
+                                    }
+                                    .frame(width: 28, height: 28)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(isSelected ? Color.white : Color.white.opacity(0.2), lineWidth: isSelected ? 3 : 1)
+                                    )
+                                    .shadow(color: isSelected ? (preset.isRainbow ? Color.purple.opacity(0.8) : preset.color.opacity(0.6)) : Color.clear, radius: 4)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                    }
+                }
+
+                Toggle("Distinct Colors for Main & Duet", isOn: $viewModel.isMultiVoiceColorsEnabled)
+                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
+                if viewModel.isRainbowColorMode {
+                    Text("Rainbow preset is active. Each lyric line cycles through a different rainbow color.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 2)
+                }
+
+                if viewModel.isMultiVoiceColorsEnabled {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("VOICE COLORS")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .tracking(1.0)
+
+                        ForEach(["v1", "v2"], id: \.self) { voiceKey in
+                            let voiceLabel = voiceKey == "v1" ? "Main Vocals" : "Duet Vocals"
+                            let currentColor = viewModel.colorForVoice(voiceKey)
+                            HStack {
+                                Circle()
+                                    .fill(currentColor)
+                                    .frame(width: 14, height: 14)
+                                Text(voiceLabel)
+                                    .font(.system(size: 14))
+                                Spacer()
+                                HexColorPicker(
+                                    hex: Binding(
+                                        get: { viewModel.voiceColors[voiceKey] ?? (voiceKey == "v1" ? "#FFFFFF" : "#38BDF8") },
+                                        set: { newHex in
+                                            viewModel.setVoiceColor(newHex, for: voiceKey)
+                                        }
+                                    ),
+                                    fallbackHex: voiceKey == "v1" ? "#FFFFFF" : "#38BDF8"
+                                )
+                            }
+                        }
+
+                        Button("Reset Voice Colors") {
+                            viewModel.resetVoiceColorsToDefaults()
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("PREVIEW")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .tracking(1.0)
+
+                    VStack(alignment: .leading, spacing: 16) {
+                        let v1Color = viewModel.colorForLine(index: 0, agent: "v1")
+                        let v2Color = viewModel.colorForLine(index: 1, agent: "v2", oppositeAligned: true)
+
+                        // Main Vocals (Leading aligned)
+                        VStack(alignment: .leading, spacing: 5) {
+                            if viewModel.isMultiVoiceColorsEnabled {
+                                Text("Main")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundStyle(v1Color.opacity(0.90))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(v1Color.opacity(0.20)))
+                            }
+
+                            Text("Cause I'm in a field of dandelions")
+                                .font(.system(size: viewModel.lyricsFontSize.leadSize, weight: .heavy, design: viewModel.lyricsFontDesign.fontDesign))
+                                .tracking(-0.5)
+                                .foregroundStyle(v1Color)
+                                .shadow(
+                                    color: viewModel.isLyricsGlowEnabled ? v1Color.opacity(0.85) : Color.clear,
+                                    radius: viewModel.isLyricsGlowEnabled ? 8 : 0,
+                                    x: 0,
+                                    y: 0
+                                )
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 8)
+
+                        // Duet Vocals (Opposite / Trailing aligned)
+                        VStack(alignment: .trailing, spacing: 5) {
+                            if viewModel.isMultiVoiceColorsEnabled {
+                                Text("Duet")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundStyle(v2Color.opacity(0.90))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(v2Color.opacity(0.20)))
+                            }
+
+                            Text("Wishing on every one that you'd be mine")
+                                .font(.system(size: viewModel.lyricsFontSize.leadSize, weight: .heavy, design: viewModel.lyricsFontDesign.fontDesign))
+                                .tracking(-0.5)
+                                .multilineTextAlignment(.trailing)
+                                .foregroundStyle(v2Color)
+                                .shadow(
+                                    color: viewModel.isLyricsGlowEnabled ? v2Color.opacity(0.85) : Color.clear,
+                                    radius: viewModel.isLyricsGlowEnabled ? 8 : 0,
+                                    x: 0,
+                                    y: 0
+                                )
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.trailing, 8)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.white.opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                    )
+                }
+                .padding(.vertical, 4)
             }
 
             Section("API Configuration") {
@@ -1924,7 +2416,7 @@ struct SettingsView: View {
                 HStack {
                     Text("Version")
                     Spacer()
-                    Text("1.0 (Beta)")
+                    Text("1.1 (Beta)")
                         .foregroundStyle(.secondary)
                 }
                 HStack {
@@ -1973,6 +2465,14 @@ private struct MiniPlayerBackgroundModifier: ViewModifier {
                 )
                 .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
         }
+    }
+}
+
+private struct LiquidScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.90 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
@@ -2028,6 +2528,62 @@ private struct MiniPlayerCapsuleButtonModifier: ViewModifier {
                         )
                 )
                 .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
+        }
+    }
+}
+
+private struct LibraryFilterContainerGlassModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        } else {
+            content
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.24), Color.white.opacity(0.06)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.0
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.16), radius: 8, y: 3)
+        }
+    }
+}
+
+private struct LibraryFilterActiveTabGlassModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else {
+            content
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(0.12))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.35), Color.white.opacity(0.12)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.0
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.20), radius: 5, y: 2)
         }
     }
 }
@@ -2285,8 +2841,9 @@ struct TTMLViewerSheet: View {
                     .overlay(.white.opacity(0.12))
 
                 // TTML XML Content
+                let effectiveTTML = LibraryManager.shared.getValidSavedTTML(for: song.id) ?? song.ttmlContent
                 ScrollView {
-                    Text(song.ttmlContent ?? "No TTML saved for this song.")
+                    Text(effectiveTTML ?? "No TTML saved for this song.")
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.85))
                         .padding(14)
@@ -2311,7 +2868,8 @@ struct TTMLViewerSheet: View {
                     .foregroundStyle(.white)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if let content = song.ttmlContent, !content.isEmpty {
+                    let contentToCopy = LibraryManager.shared.getValidSavedTTML(for: song.id) ?? song.ttmlContent
+                    if let content = contentToCopy, !content.isEmpty {
                         Button {
                             #if canImport(UIKit)
                             UIPasteboard.general.string = content
@@ -2336,6 +2894,49 @@ struct TTMLViewerSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+// MARK: - Stable Hex Color Picker
+struct HexColorPicker: View {
+    @Binding var hex: String
+    var fallbackHex: String = "#FFFFFF"
+
+    @State private var currentColor: Color = .white
+    @State private var lastReportedHex: String = ""
+
+    var body: some View {
+        ColorPicker(
+            "",
+            selection: Binding(
+                get: { currentColor },
+                set: { newColor in
+                    currentColor = newColor
+                    let newHex = newColor.toHex()
+                    if newHex.uppercased() != lastReportedHex.uppercased() {
+                        lastReportedHex = newHex
+                        hex = newHex
+                    }
+                }
+            ),
+            supportsOpacity: false
+        )
+        .labelsHidden()
+        .onAppear {
+            syncFromHex()
+        }
+        .onChange(of: hex) { _, newHex in
+            if newHex.uppercased() != lastReportedHex.uppercased() {
+                syncFromHex()
+            }
+        }
+    }
+
+    private func syncFromHex() {
+        let clean = hex.isEmpty ? fallbackHex : hex
+        let parsed = Color(hex: clean)
+        currentColor = parsed
+        lastReportedHex = parsed.toHex()
     }
 }
 

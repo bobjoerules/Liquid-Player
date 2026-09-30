@@ -55,16 +55,21 @@ open LiquidPlayeriOS.xcodeproj
 
 ---
 
-## Manual Builds
+## Builds and Releases
 
-GitHub Actions includes a manual workflow at [.github/workflows/build-mobile.yml](.github/workflows/build-mobile.yml).
+GitHub Actions includes a build & release workflow at [.github/workflows/build-mobile.yml](.github/workflows/build-mobile.yml).
 
-- `ios_export`: export an unsigned device `ipa` for sideload tools or an unsigned `simulator-app`
+### Triggers:
+- **Git Tags**: Pushing a tag (e.g. `v1.0.0` or `1.0.0-Beta`) automatically builds the `.ipa` and creates/attaches it to that GitHub Release.
+- **GitHub Release**: Publishing a release in GitHub automatically triggers the build and attaches the `.ipa`.
+- **Manual (`workflow_dispatch`)**: Run on demand from the **Actions** tab with:
+  - `ios_export`: choose `ipa`, `simulator-app`, or `both`
+  - `create_release`: toggles creating/updating a GitHub Release (enabled by default)
+  - `tag_name`: specify target tag (defaults to current tag or project version)
 
-The workflow generates the Xcode project from [ios/project.yml](ios/project.yml) using XcodeGen on the macOS runner, then builds either:
-
-- an unsigned device `.ipa` suitable for local resigning/sideloading tools such as Sideloadly
-- an unsigned iOS Simulator `.app` zip
+The workflow generates the Xcode project from [ios/project.yml](ios/project.yml) using XcodeGen on the macOS runner, then builds:
+- an unsigned device `.ipa` (`liquid-player.ipa`) suitable for local resigning/sideloading tools such as Sideloadly, TrollStore, or AltStore
+- an unsigned iOS Simulator `.app` zip (`liquid-player-ios-simulator-app.zip`)
 
 ## License
 

@@ -67,8 +67,8 @@ final class CubicSpline {
 
 enum SpicySplines {
     static let scaleSpline = CubicSpline(points: [
-        (0.0, 0.95),
-        (0.7, 1.0505),
+        (0.0, 1.0),
+        (0.45, 1.065),
         (1.0, 1.0)
     ])
 
@@ -79,8 +79,8 @@ enum SpicySplines {
     ])
 
     static let ySpline = CubicSpline(points: [
-        (0.0, 0.01),
-        (0.9, -1.0 / 60.0),
+        (0.0, 0.0),
+        (0.45, -1.0 / 50.0),
         (1.0, 0.0)
     ])
 
@@ -136,6 +136,9 @@ struct SpicySyllableTokenView: View {
     let isBackground: Bool
     let isLineActive: Bool
     let isLinePast: Bool
+    var isGlowEnabled: Bool = true
+    var isBounceEnabled: Bool = true
+    var activeColor: Color = .white
 
     var body: some View {
         if word.isLetterGroup && !word.letters.isEmpty {
@@ -154,30 +157,43 @@ struct SpicySyllableTokenView: View {
         if !isLineActive {
             let isWordSung = isLinePast || currentTimeMs >= word.endMs
             Text(cleanText)
-                .foregroundStyle(isWordSung ? (isBackground ? .white.opacity(0.90) : .white) : .white.opacity(isBackground ? 0.30 : 0.40))
+                .foregroundStyle(isWordSung ? (isBackground ? (activeColor == .white ? Color.white.opacity(0.90) : activeColor.opacity(0.70)) : (activeColor == .white ? Color.white : activeColor.opacity(0.85))) : Color.white.opacity(isBackground ? 0.30 : 0.40))
         } else {
             let isWordSung = currentTimeMs >= word.endMs
             let isWordActive = word.startMs <= currentTimeMs && currentTimeMs < word.endMs
-            let duration = max(word.endMs - word.startMs, 1)
-            let progress = isWordActive ? max(0.0, min(1.0, Double(currentTimeMs - word.startMs) / Double(duration))) : (isWordSung ? 1.0 : 0.0)
 
-            let scale = isWordActive ? SpicySplines.scaleSpline.at(progress) : (isWordSung ? 1.0 : 0.96)
-            let yLift = isWordActive ? SpicySplines.ySpline.at(progress) * 32.0 : 0.0
-            let gradPos = isWordActive ? (-0.20 + 1.20 * progress) : (isWordSung ? 1.0 : -0.20)
+            if isWordActive {
+                let duration = max(word.endMs - word.startMs, 1)
+                let progress = max(0.0, min(1.0, Double(currentTimeMs - word.startMs) / Double(duration)))
+                let scale = isBounceEnabled ? SpicySplines.scaleSpline.at(progress) : 1.0
+                let yLift = isBounceEnabled ? (SpicySplines.ySpline.at(progress) * 32.0) : 0.0
+                let p = -0.15 + 1.30 * progress
+                let stop1 = max(0.0, min(0.95, p))
+                let stop2 = min(1.0, max(stop1 + 0.05, p + 0.20))
+                let glowProgress = SpicySplines.glowSpline.at(progress)
+                let glowOpacity = isGlowEnabled ? (glowProgress * 0.85) : 0.0
 
-            Text(cleanText)
-                .foregroundStyle(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(isBackground ? 0.90 : 0.98), location: max(0.0, min(1.0, gradPos))),
-                            .init(color: .white.opacity(isBackground ? 0.30 : 0.40), location: max(0.0, min(1.0, gradPos + 0.20)))
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
+                Text(cleanText)
+                    .foregroundStyle(
+                        LinearGradient(
+                            stops: [
+                                .init(color: activeColor.opacity(isBackground ? 0.90 : 0.98), location: stop1),
+                                .init(color: Color.white.opacity(isBackground ? 0.30 : 0.40), location: stop2)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
                     )
-                )
-                .scaleEffect(scale)
-                .offset(y: yLift)
+                    .scaleEffect(scale)
+                    .offset(y: yLift)
+                    .shadow(color: isGlowEnabled ? activeColor.opacity(glowOpacity) : Color.clear, radius: isGlowEnabled ? 10 : 0, x: 0, y: 0)
+            } else if isWordSung {
+                Text(cleanText)
+                    .foregroundStyle(isBackground ? (activeColor == .white ? Color.white.opacity(0.90) : activeColor.opacity(0.85)) : (activeColor == .white ? Color.white : activeColor))
+            } else {
+                Text(cleanText)
+                    .foregroundStyle(Color.white.opacity(isBackground ? 0.30 : 0.40))
+            }
         }
     }
 
@@ -186,32 +202,44 @@ struct SpicySyllableTokenView: View {
         if !isLineActive {
             let isWordSung = isLinePast || currentTimeMs >= word.endMs
             Text(cleanText)
-                .foregroundStyle(isWordSung ? (isBackground ? .white.opacity(0.90) : .white) : .white.opacity(isBackground ? 0.30 : 0.40))
+                .foregroundStyle(isWordSung ? (isBackground ? (activeColor == .white ? Color.white.opacity(0.90) : activeColor.opacity(0.70)) : (activeColor == .white ? Color.white : activeColor.opacity(0.85))) : Color.white.opacity(isBackground ? 0.30 : 0.40))
         } else {
             HStack(spacing: 0) {
                 ForEach(word.letters) { letter in
                     let isLetterSung = currentTimeMs >= letter.endMs
                     let isLetterActive = letter.startMs <= currentTimeMs && currentTimeMs < letter.endMs
-                    let duration = max(letter.endMs - letter.startMs, 1)
-                    let progress = isLetterActive ? max(0.0, min(1.0, Double(currentTimeMs - letter.startMs) / Double(duration))) : (isLetterSung ? 1.0 : 0.0)
 
-                    let scale = isLetterActive ? SpicySplines.letterScaleSpline.at(progress) : (isLetterSung ? 1.0 : 0.96)
-                    let yLift = isLetterActive ? SpicySplines.letterYSpline.at(progress) * 28.0 : 0.0
-                    let gradPos = isLetterActive ? (-0.20 + 1.20 * progress) : (isLetterSung ? 1.0 : -0.20)
+                    if isLetterActive {
+                        let duration = max(letter.endMs - letter.startMs, 1)
+                        let progress = max(0.0, min(1.0, Double(currentTimeMs - letter.startMs) / Double(duration)))
+                        let scale = isBounceEnabled ? SpicySplines.letterScaleSpline.at(progress) : 1.0
+                        let yLift = isBounceEnabled ? (SpicySplines.letterYSpline.at(progress) * 28.0) : 0.0
+                        let p = -0.15 + 1.30 * progress
+                        let stop1 = max(0.0, min(0.95, p))
+                        let stop2 = min(1.0, max(stop1 + 0.05, p + 0.20))
+                        let letterGlow = isGlowEnabled ? (SpicySplines.glowSpline.at(progress) * 0.85) : 0.0
 
-                    Text(letter.char)
-                        .foregroundStyle(
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .white.opacity(isBackground ? 0.90 : 0.98), location: max(0.0, min(1.0, gradPos))),
-                                    .init(color: .white.opacity(isBackground ? 0.30 : 0.40), location: max(0.0, min(1.0, gradPos + 0.20)))
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
+                        Text(letter.char)
+                            .foregroundStyle(
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: activeColor.opacity(isBackground ? 0.90 : 0.98), location: stop1),
+                                        .init(color: Color.white.opacity(isBackground ? 0.30 : 0.40), location: stop2)
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
                             )
-                        )
-                        .scaleEffect(scale)
-                        .offset(y: yLift)
+                            .scaleEffect(scale)
+                            .offset(y: yLift)
+                            .shadow(color: isGlowEnabled ? activeColor.opacity(letterGlow) : Color.clear, radius: isGlowEnabled ? 8 : 0, x: 0, y: 0)
+                    } else if isLetterSung {
+                        Text(letter.char)
+                            .foregroundStyle(isBackground ? (activeColor == .white ? Color.white.opacity(0.90) : activeColor.opacity(0.85)) : (activeColor == .white ? Color.white : activeColor))
+                    } else {
+                        Text(letter.char)
+                            .foregroundStyle(Color.white.opacity(isBackground ? 0.30 : 0.40))
+                    }
                 }
             }
         }
@@ -227,6 +255,9 @@ struct SpicyWordGroupView: View {
     let isLineActive: Bool
     let isLinePast: Bool
     let lineFont: Font
+    var isGlowEnabled: Bool = true
+    var isBounceEnabled: Bool = true
+    var activeColor: Color = .white
 
     var body: some View {
         HStack(spacing: 0) {
@@ -236,7 +267,10 @@ struct SpicyWordGroupView: View {
                     currentTimeMs: currentTimeMs,
                     isBackground: isBackground,
                     isLineActive: isLineActive,
-                    isLinePast: isLinePast
+                    isLinePast: isLinePast,
+                    isGlowEnabled: isGlowEnabled,
+                    isBounceEnabled: isBounceEnabled,
+                    activeColor: activeColor
                 )
             }
             if group.hasTrailingSpace {
@@ -253,6 +287,7 @@ struct SpicyDotLineView: View {
     let line: LyricLine
     let currentTimeMs: Int
     let isLineActive: Bool
+    var isBounceEnabled: Bool = true
 
     var body: some View {
         let isPast = (currentTimeMs > line.endMs) || !isLineActive
@@ -281,8 +316,8 @@ struct SpicyDotLineView: View {
                 let isDotActive = currentTimeMs >= Int(start) && currentTimeMs < Int(end)
                 let isDotSung = currentTimeMs >= Int(end)
 
-                let scale = isDotActive ? SpicySplines.dotScaleSpline.at(p) : (isDotSung ? 1.0 : 0.75)
-                let yOffset = isDotActive ? SpicySplines.dotYSpline.at(p) * 24.0 : 0.0
+                let scale = isBounceEnabled ? (isDotActive ? SpicySplines.dotScaleSpline.at(p) : (isDotSung ? 1.0 : 0.75)) : (isDotSung ? 1.0 : 0.75)
+                let yOffset = isBounceEnabled ? (isDotActive ? SpicySplines.dotYSpline.at(p) * 24.0 : 0.0) : 0.0
                 let opacity = isDotSung ? 1.0 : (isDotActive ? SpicySplines.dotOpacitySpline.at(p) : 0.35)
 
                 Text("•")
@@ -345,7 +380,8 @@ struct SpicyFlowLayout: Layout {
             totalWidth = max(totalWidth, currentPoint.x)
             totalHeight = currentPoint.y + maxRowHeight
         }
-        return CGSize(width: min(width, totalWidth), height: totalHeight)
+        let resultWidth = (alignment == .trailing) ? width : min(width, totalWidth)
+        return CGSize(width: resultWidth, height: totalHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -388,9 +424,7 @@ struct SpicyFlowLayout: Layout {
             var x = xOffset
             var rowMaxHeight: CGFloat = 0
             for (subview, size) in zip(subviewsInRow, sizes) {
-                let maxAvailableWidth = max(10, bounds.maxX - x)
-                let subviewWidth = min(size.width, maxAvailableWidth)
-                subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: subviewWidth, height: size.height))
+                subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: size.width, height: size.height))
                 x += size.width + horizontalSpacing
                 rowMaxHeight = max(rowMaxHeight, size.height)
             }
@@ -410,6 +444,11 @@ struct SpicyLyricLineView: View, Equatable {
     let isRomanizationEnabled: Bool
     let isTranslationEnabled: Bool
     let isUserScrolling: Bool
+    let fontDesign: Font.Design
+    let fontSize: CGFloat
+    let isGlowEnabled: Bool
+    let isBounceEnabled: Bool
+    let activeColor: Color
     let onSeek: (Int) -> Void
 
     static func == (lhs: SpicyLyricLineView, rhs: SpicyLyricLineView) -> Bool {
@@ -420,6 +459,11 @@ struct SpicyLyricLineView: View, Equatable {
         lhs.isRomanizationEnabled == rhs.isRomanizationEnabled &&
         lhs.isTranslationEnabled == rhs.isTranslationEnabled &&
         lhs.isUserScrolling == rhs.isUserScrolling &&
+        lhs.fontDesign == rhs.fontDesign &&
+        lhs.fontSize == rhs.fontSize &&
+        lhs.isGlowEnabled == rhs.isGlowEnabled &&
+        lhs.isBounceEnabled == rhs.isBounceEnabled &&
+        lhs.activeColor == rhs.activeColor &&
         (!lhs.isLineActive || lhs.currentTimeMs == rhs.currentTimeMs)
     }
 
@@ -432,6 +476,11 @@ struct SpicyLyricLineView: View, Equatable {
         isRomanizationEnabled: Bool = false,
         isTranslationEnabled: Bool = false,
         isUserScrolling: Bool = false,
+        fontDesign: Font.Design = .default,
+        fontSize: CGFloat = 28,
+        isGlowEnabled: Bool = true,
+        isBounceEnabled: Bool = true,
+        activeColor: Color = .white,
         onSeek: @escaping (Int) -> Void = { _ in }
     ) {
         self.line = line
@@ -442,6 +491,11 @@ struct SpicyLyricLineView: View, Equatable {
         self.isRomanizationEnabled = isRomanizationEnabled
         self.isTranslationEnabled = isTranslationEnabled
         self.isUserScrolling = isUserScrolling
+        self.fontDesign = fontDesign
+        self.fontSize = fontSize
+        self.isGlowEnabled = isGlowEnabled
+        self.isBounceEnabled = isBounceEnabled
+        self.activeColor = activeColor
         self.onSeek = onSeek
     }
 
@@ -452,7 +506,8 @@ struct SpicyLyricLineView: View, Equatable {
                 SpicyDotLineView(
                     line: line,
                     currentTimeMs: currentTimeMs,
-                    isLineActive: isCurrent
+                    isLineActive: isCurrent,
+                    isBounceEnabled: isBounceEnabled
                 )
                 .frame(height: isCurrent ? 44 : 0)
                 .opacity(isCurrent ? 1.0 : 0.0)
@@ -462,20 +517,27 @@ struct SpicyLyricLineView: View, Equatable {
                 .onTapGesture {
                     onSeek(max(0, line.startMs + 5))
                 }
-                .animation(.spring(response: 0.45, dampingFraction: 0.85), value: isCurrent)
+                .animation(.spring(response: 0.52, dampingFraction: 0.88), value: isCurrent)
             } else {
                 VStack(alignment: line.oppositeAligned ? .trailing : .leading, spacing: 6) {
                     if line.isSongwriter {
                         Text(line.displayText.isEmpty ? " " : line.displayText)
-                            .font(.system(size: 18, weight: .medium, design: .rounded))
+                            .font(.system(size: 18, weight: .medium, design: fontDesign))
                             .foregroundStyle(.white.opacity(0.68))
+                            .multilineTextAlignment(line.oppositeAligned ? .trailing : .leading)
                             .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
                     } else if !line.isWordSynced || line.words.isEmpty {
                         // Clean whole-line display for line-synced songs (do not fake word-by-word karaoke)
                         Text(line.displayText.isEmpty ? " " : line.displayText)
                             .font(lineFont)
                             .tracking(-0.5)
-                            .foregroundStyle(isLineActive ? (line.isBackground ? .white.opacity(0.90) : .white) : (isLinePast ? (line.isBackground ? .white.opacity(0.75) : .white.opacity(0.85)) : .white.opacity(line.isBackground ? 0.30 : 0.40)))
+                            .multilineTextAlignment(line.oppositeAligned ? .trailing : .leading)
+                            .foregroundStyle(
+                                isLineActive ? (line.isBackground ? activeColor.opacity(0.90) : activeColor)
+                                : (isLinePast ? (line.isBackground ? (activeColor == .white ? .white.opacity(0.75) : activeColor.opacity(0.65)) : (activeColor == .white ? .white.opacity(0.85) : activeColor.opacity(0.75)))
+                                : .white.opacity(line.isBackground ? 0.30 : 0.40))
+                            )
+                            .shadow(color: isGlowEnabled && isLineActive ? activeColor.opacity(0.40) : Color.clear, radius: isGlowEnabled ? 10 : 0, x: 0, y: 0)
                             .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
                     } else {
                         // Word groups with preserve-word line wrap and syllable-level progressive physics
@@ -487,7 +549,10 @@ struct SpicyLyricLineView: View, Equatable {
                                     isBackground: line.isBackground,
                                     isLineActive: isLineActive,
                                     isLinePast: isLinePast,
-                                    lineFont: lineFont
+                                    lineFont: lineFont,
+                                    isGlowEnabled: isGlowEnabled,
+                                    isBounceEnabled: isBounceEnabled,
+                                    activeColor: activeColor
                                 )
                             }
                         }
@@ -498,21 +563,23 @@ struct SpicyLyricLineView: View, Equatable {
 
                     if isRomanizationEnabled, let roman = line.romanization {
                         Text(roman)
-                            .font(.system(size: line.isBackground ? 16 : 20, weight: .medium, design: .rounded))
+                            .font(.system(size: line.isBackground ? 16 : 20, weight: .medium, design: fontDesign))
                             .foregroundStyle(.white.opacity(isLineActive ? 0.72 : 0.45))
+                            .multilineTextAlignment(line.oppositeAligned ? .trailing : .leading)
                             .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
                     }
 
                     if isTranslationEnabled, let translation = line.translation {
                         Text(translation)
-                            .font(.system(size: line.isBackground ? 15 : 18, weight: .medium, design: .rounded))
+                            .font(.system(size: line.isBackground ? 15 : 18, weight: .medium, design: fontDesign))
                             .foregroundStyle(.white.opacity(isLineActive ? 0.72 : 0.45))
+                            .multilineTextAlignment(line.oppositeAligned ? .trailing : .leading)
                             .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
                     }
                 }
                 .opacity(lineOpacity)
-                .scaleEffect(isLineActive ? 1.0 : 0.96, anchor: line.oppositeAligned ? .trailing : .leading)
-                .animation(.spring(response: 0.44, dampingFraction: 0.82), value: isLineActive)
+                .scaleEffect(isBounceEnabled ? (isLineActive ? 1.0 : 0.96) : 1.0, anchor: line.oppositeAligned ? .trailing : .leading)
+                .animation(.spring(response: 0.48, dampingFraction: 1.0), value: isLineActive)
                 .modifier(OptionalBlurModifier(radius: lineBlur))
                 .padding(.top, line.isBackground ? -4 : 10)
                 .padding(.bottom, line.isBackground ? 10 : 12)
@@ -531,9 +598,9 @@ struct SpicyLyricLineView: View, Equatable {
 
     private var lineFont: Font {
         if line.isBackground {
-            return .system(size: 22, weight: .bold, design: .rounded)
+            return .system(size: max(16, fontSize - 6), weight: .bold, design: fontDesign)
         }
-        return .system(size: 28, weight: .heavy, design: .rounded)
+        return .system(size: fontSize, weight: .heavy, design: fontDesign)
     }
 
     private var lineOpacity: Double {

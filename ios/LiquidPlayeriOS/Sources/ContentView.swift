@@ -507,6 +507,30 @@ struct ContentView: View {
         badgeColor: Color? = nil
     ) -> some View {
         let isSelected = libraryFilter == filter
+        let isLight = colorScheme == .light
+
+        let countTextColor: Color = {
+            if let badgeColor = badgeColor {
+                return badgeColor
+            }
+            return isSelected ? .primary : .secondary
+        }()
+
+        let badgeFillColor: Color = {
+            if isSelected {
+                return isLight ? Color.black.opacity(0.08) : Color.white.opacity(0.20)
+            } else {
+                return isLight ? Color.black.opacity(0.04) : Color.white.opacity(0.08)
+            }
+        }()
+
+        let badgeStrokeColor: Color = {
+            if isLight {
+                return Color.black.opacity(isSelected ? 0.12 : 0.05)
+            } else {
+                return Color.white.opacity(isSelected ? 0.25 : 0.10)
+            }
+        }()
 
         return Button {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
@@ -522,19 +546,15 @@ struct ContentView: View {
 
                 Text("\(count)")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(
-                        badgeColor != nil
-                            ? badgeColor!
-                            : (isSelected ? .primary : .secondary)
-                    )
+                    .foregroundStyle(countTextColor)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
                         Capsule()
-                            .fill(isSelected ? (colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.20)) : (colorScheme == .light ? Color.black.opacity(0.04) : Color.white.opacity(0.08)))
+                            .fill(badgeFillColor)
                             .overlay(
                                 Capsule()
-                                    .stroke(colorScheme == .light ? Color.black.opacity(isSelected ? 0.12 : 0.05) : Color.white.opacity(isSelected ? 0.25 : 0.10), lineWidth: 0.8)
+                                    .stroke(badgeStrokeColor, lineWidth: 0.8)
                             )
                     )
             }

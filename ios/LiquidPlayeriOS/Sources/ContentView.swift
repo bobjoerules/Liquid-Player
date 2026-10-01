@@ -35,6 +35,7 @@ struct ContentView: View {
         var id: String { self.rawValue }
     }
 
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var viewModel = PlayerViewModel()
     @ObservedObject private var libraryManager = LibraryManager.shared
     @AppStorage("hasCompletedIntro") private var hasCompletedIntro = false
@@ -100,7 +101,7 @@ struct ContentView: View {
     // MARK: - App Loading Splash View
     private var appLoadingView: some View {
         ZStack {
-            Color.black
+            (colorScheme == .light ? Color(uiColor: .systemBackground) : Color.black)
                 .ignoresSafeArea()
 
             VStack(spacing: 24) {
@@ -113,18 +114,18 @@ struct ContentView: View {
                         .clipShape(RoundedRectangle(cornerRadius: isMac ? 30 : 25, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: isMac ? 30 : 25, style: .continuous)
-                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                .stroke(colorScheme == .light ? Color.black.opacity(0.10) : Color.white.opacity(0.18), lineWidth: 1)
                         )
-                        .shadow(color: Color.black.opacity(0.6), radius: 24, y: 12)
-                        .shadow(color: Color.white.opacity(0.12), radius: 28, y: 0)
+                        .shadow(color: Color.black.opacity(colorScheme == .light ? 0.15 : 0.6), radius: 24, y: 12)
+                        .shadow(color: (colorScheme == .light ? Color.clear : Color.white.opacity(0.12)), radius: 28, y: 0)
                         .scaleEffect(logoScale)
                         .opacity(logoOpacity)
                 } else {
                     Image(systemName: "music.note")
                         .font(.system(size: 54, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.primary)
                         .frame(width: 108, height: 108)
-                        .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 25, style: .continuous))
+                        .background((colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.12)), in: RoundedRectangle(cornerRadius: 25, style: .continuous))
                         .scaleEffect(logoScale)
                         .opacity(logoOpacity)
                 }
@@ -136,10 +137,10 @@ struct ContentView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                            .stroke(colorScheme == .light ? Color.black.opacity(0.10) : Color.white.opacity(0.18), lineWidth: 1)
                     )
-                    .shadow(color: Color.black.opacity(0.6), radius: 24, y: 12)
-                    .shadow(color: Color.white.opacity(0.12), radius: 28, y: 0)
+                    .shadow(color: Color.black.opacity(colorScheme == .light ? 0.15 : 0.6), radius: 24, y: 12)
+                    .shadow(color: (colorScheme == .light ? Color.clear : Color.white.opacity(0.12)), radius: 28, y: 0)
                     .scaleEffect(logoScale)
                     .opacity(logoOpacity)
                 #endif
@@ -147,13 +148,12 @@ struct ContentView: View {
                 VStack(spacing: 8) {
                     Text("Liquid Player")
                         .font(.system(size: isMac ? 26 : 22, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.primary)
                         .opacity(logoOpacity)
 
                     ProgressView()
-                        .tint(.white.opacity(0.7))
+                        .tint(Color.primary.opacity(0.7))
                         .scaleEffect(0.9)
-                        .opacity(logoOpacity)
                 }
             }
         }
@@ -170,7 +170,7 @@ struct ContentView: View {
             PlayerBackgroundView(style: viewModel.backgroundStyle, artwork: viewModel.artwork)
                 .animation(.easeInOut(duration: 0.35), value: viewModel.backgroundStyle)
             #else
-            Color.black.ignoresSafeArea()
+            (colorScheme == .light ? Color.white : Color.black).ignoresSafeArea()
             #endif
 
             if !hasCompletedIntro && !viewModel.spotifyService.isAuthenticated && viewModel.selectedTrackID == nil {
@@ -197,7 +197,7 @@ struct ContentView: View {
                             Label("Settings", systemImage: "gearshape.fill")
                         }
                 }
-                .tint(.white)
+                .tint(colorScheme == .light ? .black : .white)
                 .toolbarBackground(.visible, for: .tabBar)
                 .toolbarBackground(.ultraThinMaterial, for: .tabBar)
             }
@@ -214,13 +214,13 @@ struct ContentView: View {
 
                 VStack(spacing: 24) {
                     dynamicArtworkView(size: isMac ? 280 : 220)
-                        .shadow(color: .black.opacity(0.3), radius: 15, x: 0, y: 10)
+                        .shadow(color: .black.opacity(colorScheme == .light ? 0.15 : 0.3), radius: 15, x: 0, y: 10)
 
                     VStack(spacing: 6) {
                         MarqueeText(
                             text: viewModel.nowPlayingTitle,
                             font: .system(size: isMac ? 32 : 24, weight: .bold),
-                            color: .white,
+                            color: .primary,
                             alignment: .center
                         )
                         .padding(.horizontal, 32)
@@ -228,7 +228,7 @@ struct ContentView: View {
                         MarqueeText(
                             text: viewModel.authorMetadata,
                             font: .system(size: isMac ? 18 : 15, weight: .semibold),
-                            color: .white.opacity(0.6),
+                            color: .secondary,
                             alignment: .center
                         )
                         .padding(.horizontal, 32)
@@ -265,17 +265,17 @@ struct ContentView: View {
 
                         Image(systemName: "music.note")
                             .font(.system(size: 54))
-                            .foregroundStyle(.white.opacity(0.7))
+                            .foregroundStyle(.primary.opacity(0.7))
                     }
 
                     VStack(spacing: 8) {
                         Text(viewModel.spotifyService.isAuthenticated ? "Connected to Spotify" : "No Spotify Track Active")
                             .font(.system(size: 24, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
 
                         Text(viewModel.spotifyService.isAuthenticated ? "Play any song on Spotify to start live syllable synchronization, or pick a track from your Library." : "Play a track on Spotify or connect your account to start live syllable synchronization.")
                             .font(.system(size: 15, weight: .regular))
-                            .foregroundStyle(.white.opacity(0.6))
+                            .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 32)
                     }
@@ -303,14 +303,14 @@ struct ContentView: View {
                             openSpotifyApp()
                         } label: {
                             HStack(spacing: 8) {
-                                SpotifyLogoShape(size: 18, color: .white)
+                                SpotifyLogoShape(size: 18, color: viewModel.spotifyService.isAuthenticated ? .white : .primary)
                                 Text("Open Spotify")
                                     .font(.system(size: 15, weight: .semibold))
                             }
                             .padding(.horizontal, 20)
                             .padding(.vertical, 12)
-                            .background(viewModel.spotifyService.isAuthenticated ? Color(red: 0.11, green: 0.73, blue: 0.33) : .white.opacity(0.12), in: Capsule())
-                            .foregroundStyle(.white)
+                            .background(viewModel.spotifyService.isAuthenticated ? Color(red: 0.11, green: 0.73, blue: 0.33) : (colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.12)), in: Capsule())
+                            .foregroundStyle(viewModel.spotifyService.isAuthenticated ? .white : .primary)
                         }
                         .buttonStyle(.plain)
                     }
@@ -365,10 +365,10 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text("\(libraryManager.songsNeedingTTMLUpdate.count) songs have outdated lyrics")
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Color.primary)
                             Text("Saved over 30 days ago")
                                 .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.55))
+                                .foregroundStyle(Color.secondary)
                         }
 
                         Spacer()
@@ -381,7 +381,7 @@ struct ContentView: View {
                             if libraryManager.isBatchUpdating {
                                 ProgressView()
                                     .controlSize(.small)
-                                    .tint(.white)
+                                    .tint(Color.primary)
                             } else {
                                 Text("Update")
                                     .font(.system(size: 12, weight: .bold))
@@ -428,12 +428,12 @@ struct ContentView: View {
                 // Search field
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(Color.secondary)
                         .font(.system(size: 14))
 
                     TextField("Search library", text: $librarySearchText)
                         .font(.system(size: 14))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.primary)
                         .autocorrectionDisabled()
 
                     if !librarySearchText.isEmpty {
@@ -441,14 +441,14 @@ struct ContentView: View {
                             librarySearchText = ""
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.white.opacity(0.4))
+                                .foregroundStyle(Color.secondary)
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(colorScheme == .light ? Color.black.opacity(0.05) : Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 // Songs List (Clean, Borderless Apple Music Rows)
                 let songs = filteredLibrarySongs
@@ -478,7 +478,7 @@ struct ContentView: View {
 
                                 if index < songs.count - 1 {
                                     Divider()
-                                        .overlay(Color.white.opacity(0.08))
+                                        .overlay(Color.primary.opacity(0.08))
                                         .padding(.leading, 64)
                                 }
                             }
@@ -516,7 +516,7 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 Text(title)
                     .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(isSelected ? .white : .white.opacity(0.6))
+                    .foregroundStyle(isSelected ? .primary : .secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
 
@@ -525,16 +525,16 @@ struct ContentView: View {
                     .foregroundStyle(
                         badgeColor != nil
                             ? badgeColor!
-                            : (isSelected ? .white : .white.opacity(0.55))
+                            : (isSelected ? .primary : .secondary)
                     )
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
                         Capsule()
-                            .fill(isSelected ? Color.white.opacity(0.20) : Color.white.opacity(0.08))
+                            .fill(isSelected ? (colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.20)) : (colorScheme == .light ? Color.black.opacity(0.04) : Color.white.opacity(0.08)))
                             .overlay(
                                 Capsule()
-                                    .stroke(Color.white.opacity(isSelected ? 0.25 : 0.10), lineWidth: 0.8)
+                                    .stroke(colorScheme == .light ? Color.black.opacity(isSelected ? 0.12 : 0.05) : Color.white.opacity(isSelected ? 0.25 : 0.10), lineWidth: 0.8)
                             )
                     )
             }
@@ -580,15 +580,15 @@ struct ContentView: View {
         VStack(spacing: 14) {
             Image(systemName: libraryFilter == .needsUpdate ? "checkmark.seal.fill" : "music.note.list")
                 .font(.system(size: 40))
-                .foregroundStyle(libraryFilter == .needsUpdate ? Color.green.opacity(0.8) : .white.opacity(0.35))
+                .foregroundStyle(libraryFilter == .needsUpdate ? Color.green.opacity(0.8) : .secondary)
 
             Text(emptyStateTitle)
                 .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
 
             Text(emptyStateSubtitle)
                 .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
         }
@@ -628,13 +628,13 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: isMac ? 38 : 34, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 if let subtitle = subtitle {
                     Text(subtitle)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(.secondary)
                 } else if let errorMessage = viewModel.errorMessage {
                     Text(errorMessage)
                         .font(.system(size: 13, weight: .medium))
@@ -656,7 +656,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
                             .font(.system(size: isMac ? 17 : 14, weight: isMac ? .bold : .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
                             .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
                             .modifier(MiniPlayerButtonBackgroundModifier())
                             .contentShape(Circle())
@@ -693,7 +693,7 @@ struct ContentView: View {
 
             Text("Sync \(viewModel.lyricOffsetMs >= 0 ? "+" : "")\(viewModel.lyricOffsetMs) ms")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.68))
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -711,13 +711,13 @@ struct ContentView: View {
                 MarqueeText(
                     text: viewModel.nowPlayingTitle,
                     font: .system(size: isMac ? 36 : 28, weight: .semibold),
-                    color: .white
+                    color: .primary
                 )
 
                 MarqueeText(
                     text: viewModel.authorMetadata,
                     font: .system(size: isMac ? 19 : 15, weight: .medium),
-                    color: .white.opacity(0.64)
+                    color: .secondary
                 )
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -729,7 +729,7 @@ struct ContentView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .stroke(.white.opacity(0.10), lineWidth: 1)
+                .stroke(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.10), lineWidth: 1)
         )
     }
 
@@ -746,12 +746,12 @@ struct ContentView: View {
                 MarqueeText(
                     text: viewModel.nowPlayingTitle,
                     font: .system(size: isMac ? 18 : 15, weight: .semibold),
-                    color: .white
+                    color: .primary
                 )
 
                 Text(viewModel.authorMetadata)
                     .font(.system(size: isMac ? 14 : 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -767,9 +767,9 @@ struct ContentView: View {
                 Button(action: viewModel.togglePlayback) {
                     Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
                         .frame(width: 38, height: 38)
-                        .background(.white.opacity(0.14), in: Circle())
+                        .background(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.14), in: Circle())
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -779,9 +779,9 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
                         .frame(width: 38, height: 38)
-                        .background(.white.opacity(0.10), in: Circle())
+                        .background(colorScheme == .light ? Color.black.opacity(0.05) : Color.white.opacity(0.10), in: Circle())
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -834,7 +834,7 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: isMac ? 14 : 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: isMac ? 14 : 10, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
+                .stroke(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.08), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.22), radius: 22, y: 10)
     }
@@ -842,13 +842,16 @@ struct ContentView: View {
     private var artworkFallback: some View {
         ZStack {
             LinearGradient(
-                colors: [Color.white.opacity(0.18), Color.white.opacity(0.06)],
+                colors: [
+                    colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.18),
+                    colorScheme == .light ? Color.black.opacity(0.03) : Color.white.opacity(0.06)
+                ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             Image(systemName: "music.note")
                 .font(.system(size: isMac ? 44 : 30, weight: .medium))
-                .foregroundStyle(.white.opacity(0.78))
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -871,7 +874,7 @@ struct ContentView: View {
                                     .font(.system(size: 13, weight: .semibold))
                             }
                             .toggleStyle(.button)
-                            .tint(.white.opacity(0.18))
+                            .tint(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18))
                         }
 
                         if hasTranslations {
@@ -880,7 +883,7 @@ struct ContentView: View {
                                     .font(.system(size: 13, weight: .semibold))
                             }
                             .toggleStyle(.button)
-                            .tint(.white.opacity(0.18))
+                            .tint(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18))
                         }
                     }
                     .padding(.horizontal, 24)
@@ -896,10 +899,10 @@ struct ContentView: View {
                         if viewModel.isLoadingLyrics {
                             VStack(spacing: 12) {
                                 ProgressView()
-                                    .tint(.white)
+                                    .tint(.primary)
                                 Text("Fetching lyrics from Spicy Lyrics...")
                                     .font(.system(size: 15, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.6))
+                                    .foregroundStyle(.secondary)
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 80)
@@ -965,7 +968,7 @@ struct ContentView: View {
                 Group {
                     if !isFullScreen {
                         RoundedRectangle(cornerRadius: 30, style: .continuous)
-                            .fill(.white.opacity(0.08))
+                            .fill(colorScheme == .light ? Color.black.opacity(0.03) : Color.white.opacity(0.08))
                     }
                 }
             )
@@ -973,7 +976,7 @@ struct ContentView: View {
                 Group {
                     if !isFullScreen {
                         RoundedRectangle(cornerRadius: 30, style: .continuous)
-                            .stroke(.white.opacity(0.08), lineWidth: 1)
+                            .stroke(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.08), lineWidth: 1)
                     }
                 }
             )
@@ -992,12 +995,12 @@ struct ContentView: View {
                             Text("Center")
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                         }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .background(.ultraThinMaterial, in: Capsule())
-                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+                        .overlay(Capsule().stroke(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18), lineWidth: 1))
+                        .shadow(color: Color.black.opacity(colorScheme == .light ? 0.12 : 0.3), radius: 8, y: 4)
                     }
                     .buttonStyle(.plain)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -1084,7 +1087,7 @@ struct ContentView: View {
         let isActive: Bool = isTimeActive
         let distance: Int = activeIndex >= 0 ? (index - activeIndex) : 0
         let lineTimeMs: Int = (isActive || line.isInterlude) ? displayedTimeMs : (isPast ? line.endMs : 0)
-        let lineColor: Color = viewModel.colorForLine(index: index, agent: line.agent, oppositeAligned: line.oppositeAligned)
+        let lineColor: Color = viewModel.colorForLine(index: index, agent: line.agent, oppositeAligned: line.oppositeAligned, colorScheme: colorScheme)
 
         SpicyLyricLineView(
             line: line,
@@ -1128,7 +1131,7 @@ struct ContentView: View {
                 Button {
                     openSpotifyApp()
                 } label: {
-                    SpotifyLogoShape(size: 24, color: .white)
+                    SpotifyLogoShape(size: 24, color: .primary)
                         .frame(width: 52, height: 52)
                         .contentShape(Rectangle())
                 }
@@ -1145,7 +1148,7 @@ struct ContentView: View {
                 Button(action: viewModel.togglePlayback) {
                     Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 38, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
                         .frame(width: 66, height: 66)
                         .contentShape(Rectangle())
                 }
@@ -1166,7 +1169,7 @@ struct ContentView: View {
             if isHeart && isActive {
                 return .red
             }
-            return isHighlighted ? .white : .white.opacity(0.48)
+            return isHighlighted ? .primary : .secondary
         }()
 
         return Button(action: action) {
@@ -1203,13 +1206,13 @@ struct ContentView: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
                 .background(.ultraThinMaterial, in: Capsule())
                 .overlay(
                     Capsule()
-                        .stroke(.white.opacity(0.08), lineWidth: 1)
+                        .stroke(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.08), lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -1228,7 +1231,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "chevron.down")
                             .font(.system(size: isMac ? 17 : 15, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
                             .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
                             .modifier(MiniPlayerButtonBackgroundModifier())
                             .contentShape(Circle())
@@ -1239,7 +1242,7 @@ struct ContentView: View {
 
                     Text("Now Playing")
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(.primary)
 
                     Spacer()
 
@@ -1271,7 +1274,7 @@ struct ContentView: View {
                         MarqueeText(
                             text: viewModel.nowPlayingTitle,
                             font: .system(size: isMac ? 32 : 26, weight: .bold),
-                            color: .white,
+                            color: .primary,
                             alignment: .center
                         )
                         .padding(.horizontal, 32)
@@ -1279,7 +1282,7 @@ struct ContentView: View {
                         MarqueeText(
                             text: viewModel.authorMetadata,
                             font: .system(size: isMac ? 19 : 16, weight: .semibold),
-                            color: .white.opacity(0.6),
+                            color: .secondary,
                             alignment: .center
                         )
                         .padding(.horizontal, 32)
@@ -1316,13 +1319,13 @@ struct ContentView: View {
                         MarqueeText(
                             text: viewModel.nowPlayingTitle,
                             font: .system(size: 24, weight: .bold),
-                            color: .white
+                            color: .primary
                         )
 
                         MarqueeText(
                             text: viewModel.authorMetadata,
                             font: .system(size: 15, weight: .medium),
-                            color: .white.opacity(0.6)
+                            color: .secondary
                         )
                     }
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -1390,20 +1393,23 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
+                .stroke(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.08), lineWidth: 1)
         )
     }
 
     private func dynamicFallback(size: CGFloat) -> some View {
         ZStack {
             LinearGradient(
-                colors: [Color.white.opacity(0.18), Color.white.opacity(0.06)],
+                colors: [
+                    colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.18),
+                    colorScheme == .light ? Color.black.opacity(0.03) : Color.white.opacity(0.06)
+                ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             Image(systemName: "music.note")
                 .font(.system(size: size * 0.35, weight: .medium))
-                .foregroundStyle(.white.opacity(0.78))
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -1421,11 +1427,11 @@ struct ContentView: View {
 
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(.white.opacity(0.18))
+                        .fill(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18))
                         .frame(height: 8)
 
                     Capsule()
-                        .fill(.white)
+                        .fill(Color.primary)
                         .frame(width: progressWidth, height: 8)
                 }
                 .contentShape(Rectangle())
@@ -1454,13 +1460,13 @@ struct ContentView: View {
             HStack {
                 Text(timecode(Int(isDraggingSlider ? dragValue : current)))
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.secondary)
 
                 Spacer()
 
                 Text(timecode(viewModel.durationMs))
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.secondary)
             }
         }
         .disabled(viewModel.durationMs == 0)
@@ -1490,11 +1496,11 @@ struct ContentView: View {
 
                         Text("Your Music, Liquid & Synchronized.")
                             .font(.system(size: isMac ? 22 : 18, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
 
                         Text("Syllable-synchronized lyrics powered by Spicy Lyrics and Spotify.")
                             .font(.system(size: isMac ? 16 : 14, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.6))
+                            .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
                     }
@@ -1548,14 +1554,18 @@ struct ContentView: View {
                     }
                 }
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(.secondary)
                 .padding(.vertical, 8)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
             .background(
                 LinearGradient(
-                    colors: [.clear, .black.opacity(0.85), .black],
+                    colors: [
+                        .clear,
+                        (colorScheme == .light ? Color(uiColor: .systemBackground).opacity(0.85) : Color.black.opacity(0.85)),
+                        (colorScheme == .light ? Color(uiColor: .systemBackground) : Color.black)
+                    ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
@@ -1563,7 +1573,7 @@ struct ContentView: View {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.ignoresSafeArea())
+        .background((colorScheme == .light ? Color(uiColor: .systemBackground) : Color.black).ignoresSafeArea())
     }
 
     private func tutorialRow(systemImage: String, title: String, description: String) -> some View {
@@ -1577,20 +1587,20 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
 
                 Text(description)
                     .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(colorScheme == .light ? Color.black.opacity(0.04) : Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(.white.opacity(0.04), lineWidth: 1)
+                .stroke(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.04), lineWidth: 1)
         )
     }
 }
@@ -1690,15 +1700,16 @@ struct SpotifyArtworkView: View {
     private var placeholder: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(.white.opacity(0.12))
+                .fill(Color.secondary.opacity(0.15))
             Image(systemName: "music.note")
                 .font(.system(size: size * 0.36, weight: .medium))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(.secondary)
         }
     }
 }
 
 private struct SpotifyTrackListRow: View {
+    @Environment(\.colorScheme) private var colorScheme
     let track: SpotifyTrackItem
     let isActive: Bool
     let isFavorite: Bool
@@ -1713,13 +1724,13 @@ private struct SpotifyTrackListRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.name)
                         .font(.system(size: isMac ? 17 : 15, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.tail)
 
                     Text(track.artistNames)
                         .font(.system(size: isMac ? 14 : 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.56))
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -1734,14 +1745,14 @@ private struct SpotifyTrackListRow: View {
 
                     Image(systemName: "play.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundStyle(isActive ? Color(red: 0.11, green: 0.85, blue: 0.45) : .white.opacity(0.4))
+                        .foregroundStyle(isActive ? Color(red: 0.11, green: 0.85, blue: 0.45) : .secondary)
                 }
             }
             .padding(12)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(isActive ? Color(red: 0.11, green: 0.85, blue: 0.45).opacity(0.5) : .white.opacity(0.06), lineWidth: 1)
+                    .stroke(isActive ? Color(red: 0.11, green: 0.85, blue: 0.45).opacity(0.5) : (colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.06)), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -1760,6 +1771,7 @@ private struct SpotifyTrackListRow: View {
 
 #if canImport(UIKit)
 private struct PlayerBackgroundView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let style: PlayerBackgroundStyle
     let artwork: UIImage?
 
@@ -1769,11 +1781,11 @@ private struct PlayerBackgroundView: View {
             ZStack {
                 switch style {
                 case .black:
-                    Color.black
+                    colorScheme == .light ? Color(uiColor: .systemBackground) : Color.black
 
                 case .blurred:
                     ZStack {
-                        Color(red: 0.07, green: 0.07, blue: 0.09)
+                        colorScheme == .light ? Color(uiColor: .systemBackground) : Color(red: 0.07, green: 0.07, blue: 0.09)
 
                         if let artwork {
                             Image(uiImage: artwork)
@@ -1782,11 +1794,13 @@ private struct PlayerBackgroundView: View {
                                 .frame(width: size.width, height: size.height)
                                 .scaleEffect(1.15)
                                 .blur(radius: 65)
-                                .opacity(0.50)
+                                .opacity(colorScheme == .light ? 0.35 : 0.50)
                                 .clipped()
                         } else {
                             LinearGradient(
-                                colors: [Color(red: 0.10, green: 0.10, blue: 0.14), Color.black],
+                                colors: colorScheme == .light
+                                    ? [Color(red: 0.94, green: 0.95, blue: 0.98), Color(uiColor: .systemBackground)]
+                                    : [Color(red: 0.10, green: 0.10, blue: 0.14), Color.black],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -1795,7 +1809,9 @@ private struct PlayerBackgroundView: View {
                         Rectangle()
                             .fill(
                                 LinearGradient(
-                                    colors: [Color.black.opacity(0.35), Color.black.opacity(0.85)],
+                                    colors: colorScheme == .light
+                                        ? [Color.white.opacity(0.40), Color.white.opacity(0.85)]
+                                        : [Color.black.opacity(0.35), Color.black.opacity(0.85)],
                                     startPoint: .top,
                                     endPoint: .bottom
                                 )
@@ -1807,11 +1823,17 @@ private struct PlayerBackgroundView: View {
                 case .gradient:
                     ZStack {
                         LinearGradient(
-                            colors: [
-                                Color(red: 0.11, green: 0.13, blue: 0.18),
-                                Color(red: 0.16, green: 0.10, blue: 0.14),
-                                Color(red: 0.06, green: 0.07, blue: 0.09)
-                            ],
+                            colors: colorScheme == .light
+                                ? [
+                                    Color(red: 0.92, green: 0.94, blue: 0.98),
+                                    Color(red: 0.96, green: 0.92, blue: 0.95),
+                                    Color(red: 0.94, green: 0.96, blue: 0.98)
+                                  ]
+                                : [
+                                    Color(red: 0.11, green: 0.13, blue: 0.18),
+                                    Color(red: 0.16, green: 0.10, blue: 0.14),
+                                    Color(red: 0.06, green: 0.07, blue: 0.09)
+                                  ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -1823,12 +1845,12 @@ private struct PlayerBackgroundView: View {
                                 .frame(width: size.width, height: size.height)
                                 .scaleEffect(1.15)
                                 .blur(radius: 65)
-                                .opacity(0.24)
+                                .opacity(colorScheme == .light ? 0.20 : 0.24)
                                 .clipped()
                         }
 
                         Rectangle()
-                            .fill(Color.black.opacity(0.65))
+                            .fill(colorScheme == .light ? Color.white.opacity(0.55) : Color.black.opacity(0.65))
                     }
                     .frame(width: size.width, height: size.height)
                     .clipped()
@@ -1846,6 +1868,7 @@ private struct PlayerBackgroundView: View {
 #endif
 
 private struct AnimatedArtworkBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
     let artwork: UIImage?
 
     var body: some View {
@@ -1853,10 +1876,13 @@ private struct AnimatedArtworkBackground: View {
             GeometryReader { proxy in
                 let size = proxy.size
                 let time = context.date.timeIntervalSinceReferenceDate
+                let isLight = colorScheme == .light
 
                 ZStack {
                     LinearGradient(
-                        colors: [Color(red: 0.08, green: 0.09, blue: 0.12), Color(red: 0.16, green: 0.12, blue: 0.14)],
+                        colors: isLight
+                            ? [Color(red: 0.92, green: 0.94, blue: 0.98), Color(red: 0.97, green: 0.93, blue: 0.95)]
+                            : [Color(red: 0.08, green: 0.09, blue: 0.12), Color(red: 0.16, green: 0.12, blue: 0.14)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
@@ -1865,21 +1891,24 @@ private struct AnimatedArtworkBackground: View {
                         color: Color(red: 1.0, green: 0.54, blue: 0.45),
                         size: min(size.width, size.height) * 0.72,
                         x: size.width * (0.14 + 0.08 * sin(time * 0.35)),
-                        y: size.height * (0.20 + 0.10 * cos(time * 0.28))
+                        y: size.height * (0.20 + 0.10 * cos(time * 0.28)),
+                        isLight: isLight
                     )
 
                     orb(
                         color: Color(red: 0.98, green: 0.82, blue: 0.63),
                         size: min(size.width, size.height) * 0.52,
                         x: size.width * (0.82 + 0.08 * cos(time * 0.26)),
-                        y: size.height * (0.28 + 0.12 * sin(time * 0.31))
+                        y: size.height * (0.28 + 0.12 * sin(time * 0.31)),
+                        isLight: isLight
                     )
 
                     orb(
                         color: Color(red: 0.88, green: 0.36, blue: 0.28),
                         size: min(size.width, size.height) * 0.66,
                         x: size.width * (0.58 + 0.07 * sin(time * 0.20)),
-                        y: size.height * (0.84 + 0.05 * cos(time * 0.23))
+                        y: size.height * (0.84 + 0.05 * cos(time * 0.23)),
+                        isLight: isLight
                     )
 
                     if let artwork {
@@ -1887,14 +1916,16 @@ private struct AnimatedArtworkBackground: View {
                             .resizable()
                             .scaledToFill()
                             .blur(radius: 90)
-                            .opacity(0.34)
+                            .opacity(isLight ? 0.22 : 0.34)
                             .ignoresSafeArea()
                     }
 
                     Rectangle()
                         .fill(
                             LinearGradient(
-                                colors: [Color.white.opacity(0.02), Color.black.opacity(0.76)],
+                                colors: isLight
+                                    ? [Color.white.opacity(0.20), Color.white.opacity(0.80)]
+                                    : [Color.white.opacity(0.02), Color.black.opacity(0.76)],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -1906,14 +1937,14 @@ private struct AnimatedArtworkBackground: View {
         }
     }
 
-    private func orb(color: Color, size: CGFloat, x: CGFloat, y: CGFloat) -> some View {
+    private func orb(color: Color, size: CGFloat, x: CGFloat, y: CGFloat, isLight: Bool) -> some View {
         Circle()
             .fill(color)
             .frame(width: size, height: size)
             .position(x: x, y: y)
             .blur(radius: size * 0.22)
-            .opacity(0.52)
-            .blendMode(.screen)
+            .opacity(isLight ? 0.30 : 0.52)
+            .blendMode(isLight ? .normal : .screen)
     }
 }
 
@@ -2075,6 +2106,7 @@ private struct MarqueeText: View {
 // MARK: - Settings View
 struct SettingsView: View {
     @ObservedObject var viewModel: PlayerViewModel
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var spicyLyricsKey: String = APIConfig.spicyLyricsApiKey
     @State private var spotifyClientId: String = APIConfig.spotifyClientId
@@ -2148,7 +2180,7 @@ struct SettingsView: View {
             Section("Appearance") {
                 Picker("Background", selection: $viewModel.backgroundStyle) {
                     ForEach(PlayerBackgroundStyle.allCases) { style in
-                        Text(style.rawValue).tag(style)
+                        Text(style.displayName(for: colorScheme)).tag(style)
                     }
                 }
                 .pickerStyle(.menu)
@@ -2177,7 +2209,18 @@ struct SettingsView: View {
                     HStack {
                         Text("Lyric Color")
                         Spacer()
-                        if viewModel.isRainbowColorMode {
+                        if viewModel.isArtworkColorMode {
+                            HStack(spacing: 4) {
+                                Image(systemName: "paintpalette.fill")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("Album Art")
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                            }
+                            .foregroundStyle(viewModel.artworkColor(for: colorScheme))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.10)))
+                        } else if viewModel.isRainbowColorMode {
                             Text("Rainbow")
                                 .font(.system(size: 12, weight: .bold, design: .rounded))
                                 .foregroundStyle(
@@ -2189,44 +2232,40 @@ struct SettingsView: View {
                                 )
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background(Capsule().fill(Color.white.opacity(0.10)))
+                                .background(Capsule().fill(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.10)))
                         }
                         HexColorPicker(
                             hex: Binding(
-                                get: { viewModel.isRainbowColorMode ? "#FF4B72" : viewModel.lyricsColorHex },
+                                get: {
+                                    if viewModel.isRainbowColorMode {
+                                        return "#FF4B72"
+                                    } else if viewModel.isArtworkColorMode {
+                                        return viewModel.artworkHex(for: colorScheme)
+                                    }
+                                    return viewModel.effectiveLyricsColorHex(for: colorScheme)
+                                },
                                 set: { viewModel.lyricsColorHex = $0 }
                             ),
-                            fallbackHex: "#FFFFFF"
+                            fallbackHex: colorScheme == .light ? "#000000" : "#FFFFFF"
                         )
                     }
 
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
-                            ForEach(LyricColorPreset.presets) { preset in
-                                let isSelected = viewModel.lyricsColorHex.uppercased() == preset.hex.uppercased()
+                            ForEach(LyricColorPreset.presets(for: colorScheme)) { preset in
+                                let isSelected: Bool = {
+                                    if preset.isRainbow {
+                                        return viewModel.isRainbowColorMode
+                                    }
+                                    if preset.isArtwork {
+                                        return viewModel.isArtworkColorMode
+                                    }
+                                    return viewModel.effectiveLyricsColorHex(for: colorScheme).uppercased() == preset.hex.uppercased()
+                                }()
                                 Button {
                                     viewModel.lyricsColorHex = preset.hex
                                 } label: {
-                                    Group {
-                                        if preset.isRainbow {
-                                            Circle()
-                                                .fill(
-                                                    AngularGradient(
-                                                        colors: LyricColorPreset.rainbowColors + [LyricColorPreset.rainbowColors[0]],
-                                                        center: .center
-                                                    )
-                                                )
-                                        } else {
-                                            Circle()
-                                                .fill(preset.color)
-                                        }
-                                    }
-                                    .frame(width: 28, height: 28)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(isSelected ? Color.white : Color.white.opacity(0.2), lineWidth: isSelected ? 3 : 1)
-                                    )
-                                    .shadow(color: isSelected ? (preset.isRainbow ? Color.purple.opacity(0.8) : preset.color.opacity(0.6)) : Color.clear, radius: 4)
+                                    presetColorCircle(preset: preset, isSelected: isSelected)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -2244,6 +2283,11 @@ struct SettingsView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 2)
+                } else if viewModel.isArtworkColorMode {
+                    Text("Album Art preset is active. Lyric color automatically matches each song's album artwork.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 2)
                 }
 
                 if viewModel.isMultiVoiceColorsEnabled {
@@ -2253,27 +2297,8 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .tracking(1.0)
 
-                        ForEach(["v1", "v2"], id: \.self) { voiceKey in
-                            let voiceLabel = voiceKey == "v1" ? "Main Vocals" : "Duet Vocals"
-                            let currentColor = viewModel.colorForVoice(voiceKey)
-                            HStack {
-                                Circle()
-                                    .fill(currentColor)
-                                    .frame(width: 14, height: 14)
-                                Text(voiceLabel)
-                                    .font(.system(size: 14))
-                                Spacer()
-                                HexColorPicker(
-                                    hex: Binding(
-                                        get: { viewModel.voiceColors[voiceKey] ?? (voiceKey == "v1" ? "#FFFFFF" : "#38BDF8") },
-                                        set: { newHex in
-                                            viewModel.setVoiceColor(newHex, for: voiceKey)
-                                        }
-                                    ),
-                                    fallbackHex: voiceKey == "v1" ? "#FFFFFF" : "#38BDF8"
-                                )
-                            }
-                        }
+                        voiceColorRow(voiceKey: "v1", voiceLabel: "Main Vocals")
+                        voiceColorRow(voiceKey: "v2", voiceLabel: "Duet Vocals")
 
                         Button("Reset Voice Colors") {
                             viewModel.resetVoiceColorsToDefaults()
@@ -2292,8 +2317,8 @@ struct SettingsView: View {
                         .tracking(1.0)
 
                     VStack(alignment: .leading, spacing: 16) {
-                        let v1Color = viewModel.colorForLine(index: 0, agent: "v1")
-                        let v2Color = viewModel.colorForLine(index: 1, agent: "v2", oppositeAligned: true)
+                        let v1Color = viewModel.colorForLine(index: 0, agent: "v1", colorScheme: colorScheme)
+                        let v2Color = viewModel.colorForLine(index: 1, agent: "v2", oppositeAligned: true, colorScheme: colorScheme)
 
                         // Main Vocals (Leading aligned)
                         VStack(alignment: .leading, spacing: 5) {
@@ -2351,10 +2376,10 @@ struct SettingsView: View {
                     .padding(.vertical, 16)
                     .background(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color.white.opacity(0.08))
+                            .fill(colorScheme == .light ? Color.black.opacity(0.04) : Color.white.opacity(0.08))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                                    .strokeBorder(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.12), lineWidth: 1)
                             )
                     )
                 }
@@ -2436,6 +2461,89 @@ struct SettingsView: View {
             Text("Your API configuration has been safely updated.")
         }
     }
+
+    private func presetColorCircle(preset: LyricColorPreset, isSelected: Bool) -> some View {
+        let isLight = (colorScheme == .light)
+        let strokeColor: Color = isSelected
+            ? (isLight ? Color.black : Color.white)
+            : (isLight ? Color.black.opacity(0.18) : Color.white.opacity(0.20))
+        let strokeWidth: CGFloat = isSelected ? 3.0 : 1.0
+
+        let shadowColor: Color
+        if isSelected {
+            if preset.isRainbow {
+                shadowColor = Color.purple.opacity(0.8)
+            } else if preset.isArtwork {
+                shadowColor = viewModel.artworkColor(for: colorScheme).opacity(0.7)
+            } else {
+                shadowColor = preset.color.opacity(0.6)
+            }
+        } else {
+            shadowColor = Color.clear
+        }
+
+        return ZStack {
+            if preset.isRainbow {
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: LyricColorPreset.rainbowColors + [LyricColorPreset.rainbowColors[0]],
+                            center: .center
+                        )
+                    )
+            } else if preset.isArtwork {
+                Circle()
+                    .fill(viewModel.artworkColor(for: colorScheme))
+                Image(systemName: "paintpalette.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(viewModel.isArtworkColorBright(for: colorScheme) ? Color.black.opacity(0.80) : Color.white.opacity(0.90))
+            } else {
+                Circle()
+                    .fill(preset.color)
+            }
+        }
+        .frame(width: 28, height: 28)
+        .overlay(
+            Circle()
+                .stroke(strokeColor, lineWidth: strokeWidth)
+        )
+        .shadow(color: shadowColor, radius: 4)
+    }
+
+    private func voiceColorRow(voiceKey: String, voiceLabel: String) -> some View {
+        let currentColor = viewModel.colorForVoice(voiceKey, colorScheme: colorScheme)
+        let defaultHex: String = {
+            if voiceKey == "v1" {
+                if viewModel.isArtworkColorMode {
+                    return viewModel.artworkHex(for: colorScheme)
+                }
+                return colorScheme == .light ? "#000000" : "#FFFFFF"
+            }
+            return "#38BDF8"
+        }()
+        return HStack {
+            Circle()
+                .fill(currentColor)
+                .frame(width: 14, height: 14)
+            Text(voiceLabel)
+                .font(.system(size: 14))
+            Spacer()
+            HexColorPicker(
+                hex: Binding(
+                    get: {
+                        if voiceKey == "v1" && viewModel.isArtworkColorMode {
+                            return viewModel.artworkHex(for: colorScheme)
+                        }
+                        return LyricColorPreset.resolveAdaptiveHex(viewModel.voiceColors[voiceKey] ?? defaultHex, for: colorScheme)
+                    },
+                    set: { newHex in
+                        viewModel.setVoiceColor(newHex, for: voiceKey)
+                    }
+                ),
+                fallbackHex: defaultHex
+            )
+        }
+    }
 }
 
 typealias SettingsSheet = SettingsView
@@ -2450,20 +2558,20 @@ private struct MiniPlayerBackgroundModifier: ViewModifier {
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill(.white.opacity(0.03))
+                        .fill(Color.primary.opacity(0.02))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .stroke(
                             LinearGradient(
-                                colors: [.white.opacity(0.28), .white.opacity(0.08)],
+                                colors: [Color.primary.opacity(0.18), Color.primary.opacity(0.05)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
                             lineWidth: 1.2
                         )
                 )
-                .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+                .shadow(color: .black.opacity(0.12), radius: 12, y: 6)
         }
     }
 }
@@ -2486,20 +2594,20 @@ private struct MiniPlayerButtonBackgroundModifier: ViewModifier {
                 .background(.thinMaterial, in: Circle())
                 .overlay(
                     Circle()
-                        .fill(.white.opacity(0.03))
+                        .fill(Color.primary.opacity(0.02))
                 )
                 .overlay(
                     Circle()
                         .stroke(
                             LinearGradient(
-                                colors: [.white.opacity(0.28), .white.opacity(0.08)],
+                                colors: [Color.primary.opacity(0.18), Color.primary.opacity(0.05)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
                             lineWidth: 1.2
                         )
                 )
-                .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
+                .shadow(color: .black.opacity(0.08), radius: 6, y: 3)
         }
     }
 }
@@ -2514,20 +2622,20 @@ private struct MiniPlayerCapsuleButtonModifier: ViewModifier {
                 .background(.thinMaterial, in: Capsule())
                 .overlay(
                     Capsule()
-                        .fill(.white.opacity(0.03))
+                        .fill(Color.primary.opacity(0.02))
                 )
                 .overlay(
                     Capsule()
                         .stroke(
                             LinearGradient(
-                                colors: [.white.opacity(0.28), .white.opacity(0.08)],
+                                colors: [Color.primary.opacity(0.18), Color.primary.opacity(0.05)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
                             lineWidth: 1.2
                         )
                 )
-                .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
+                .shadow(color: .black.opacity(0.08), radius: 6, y: 3)
         }
     }
 }
@@ -2542,20 +2650,20 @@ private struct LibraryFilterContainerGlassModifier: ViewModifier {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.04))
+                        .fill(Color.primary.opacity(0.02))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(
                             LinearGradient(
-                                colors: [Color.white.opacity(0.24), Color.white.opacity(0.06)],
+                                colors: [Color.primary.opacity(0.18), Color.primary.opacity(0.05)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
                             lineWidth: 1.0
                         )
                 )
-                .shadow(color: Color.black.opacity(0.16), radius: 8, y: 3)
+                .shadow(color: Color.black.opacity(0.10), radius: 8, y: 3)
         }
     }
 }
@@ -2570,20 +2678,20 @@ private struct LibraryFilterActiveTabGlassModifier: ViewModifier {
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
+                        .fill(Color.primary.opacity(0.08))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(
                             LinearGradient(
-                                colors: [Color.white.opacity(0.35), Color.white.opacity(0.12)],
+                                colors: [Color.primary.opacity(0.25), Color.primary.opacity(0.08)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
                             lineWidth: 1.0
                         )
                 )
-                .shadow(color: Color.black.opacity(0.20), radius: 5, y: 2)
+                .shadow(color: Color.black.opacity(0.12), radius: 5, y: 2)
         }
     }
 }
@@ -2591,24 +2699,25 @@ private struct LibraryFilterActiveTabGlassModifier: ViewModifier {
 struct QueueView: View {
     @ObservedObject var viewModel: PlayerViewModel
     @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                (colorScheme == .light ? Color(uiColor: .systemGroupedBackground) : Color.black).ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     if viewModel.playbackQueue.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "music.note.list")
                                 .font(.system(size: 48))
-                                .foregroundStyle(.white.opacity(0.3))
+                                .foregroundStyle(.secondary)
                             Text("Queue is Empty")
                                 .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.5))
+                                .foregroundStyle(.primary)
                             Text("Search songs on Spotify or play from library to populate upcoming tracks.")
                                 .font(.system(size: 13))
-                                .foregroundStyle(.white.opacity(0.3))
+                                .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 32)
                         }
@@ -2622,13 +2731,13 @@ struct QueueView: View {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(track.name)
                                             .font(.system(size: 15, weight: .semibold))
-                                            .foregroundStyle(.white)
+                                            .foregroundStyle(.primary)
                                             .lineLimit(1)
                                             .truncationMode(.tail)
 
                                         Text(track.artistNames)
                                             .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(.white.opacity(0.5))
+                                            .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                             .truncationMode(.tail)
                                     }
@@ -2637,9 +2746,9 @@ struct QueueView: View {
                                 .padding(.vertical, 8)
                                 .padding(.horizontal, 8)
                                 .contentShape(.dragPreview, Rectangle())
-                                .listRowBackground(Color.white.opacity(0.06))
+                                .listRowBackground(colorScheme == .light ? Color(uiColor: .secondarySystemGroupedBackground) : Color.white.opacity(0.06))
                                 .listRowSeparator(.visible)
-                                .listRowSeparatorTint(.white.opacity(0.08))
+                                .listRowSeparatorTint(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.08))
                             }
                             .onDelete(perform: viewModel.removeTrackFromQueue(at:))
                             .onMove(perform: viewModel.moveTrackInQueue(from:to:))
@@ -2669,10 +2778,9 @@ struct QueueView: View {
                         dismiss()
                     }
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
                 }
             }
-            .preferredColorScheme(.dark)
             .task {
                 await viewModel.prefetchUpcomingLyrics()
             }
@@ -2710,7 +2818,7 @@ struct LibrarySongRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.name)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(isCurrent ? Color(red: 0.11, green: 0.73, blue: 0.33) : .white)
+                    .foregroundStyle(isCurrent ? Color(red: 0.11, green: 0.73, blue: 0.33) : .primary)
                     .lineLimit(1)
 
                 HStack(spacing: 5) {
@@ -2719,7 +2827,7 @@ struct LibrarySongRowView: View {
 
                     if song.needsUpdate {
                         Text("•")
-                            .foregroundStyle(.white.opacity(0.3))
+                            .foregroundStyle(.secondary)
                         HStack(spacing: 3) {
                             Image(systemName: "exclamationmark.circle.fill")
                                 .font(.system(size: 10))
@@ -2728,23 +2836,23 @@ struct LibrarySongRowView: View {
                         .foregroundStyle(Color.orange)
                     } else if song.hasTTML {
                         Text("•")
-                            .foregroundStyle(.white.opacity(0.3))
+                            .foregroundStyle(.secondary)
                         Text("TTML")
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(.secondary)
                     } else if song.isInstrumentalOrNoLyrics {
                         Text("•")
-                            .foregroundStyle(.white.opacity(0.3))
+                            .foregroundStyle(.secondary)
                         Text("No Lyrics")
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(.secondary)
                     }
 
                     Text("•")
-                        .foregroundStyle(.white.opacity(0.3))
+                        .foregroundStyle(.secondary)
                     Text(song.playedAgoDescription)
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(.secondary)
                 }
                 .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 8)
@@ -2753,7 +2861,7 @@ struct LibrarySongRowView: View {
             if isUpdating {
                 ProgressView()
                     .controlSize(.small)
-                    .tint(.white.opacity(0.8))
+                    .tint(.secondary)
                     .frame(width: 32, height: 32)
             } else {
                 Menu {
@@ -2773,7 +2881,7 @@ struct LibrarySongRowView: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(.secondary)
                         .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                 }
@@ -2807,6 +2915,7 @@ struct LibrarySongRowView: View {
 struct TTMLViewerSheet: View {
     let song: LibrarySong
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var copied = false
 
     var body: some View {
@@ -2816,11 +2925,11 @@ struct TTMLViewerSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(song.name)
                         .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
 
                     Text(song.artistNames)
                         .font(.system(size: 14))
-                        .foregroundStyle(.white.opacity(0.65))
+                        .foregroundStyle(.secondary)
 
                     HStack(spacing: 8) {
                         Text(song.isTTMLExpired ? "⚠️ Saved over 30 days ago (Update needed)" : "✓ Saved TTML (\(song.daysUntilTTMLExpires) days remaining)")
@@ -2830,7 +2939,7 @@ struct TTMLViewerSheet: View {
                         if let date = song.ttmlSavedAt {
                             Text("• Saved \(date.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.45))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -2838,24 +2947,24 @@ struct TTMLViewerSheet: View {
                 .padding(.top, 12)
 
                 Divider()
-                    .overlay(.white.opacity(0.12))
+                    .overlay(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.12))
 
                 // TTML XML Content
                 let effectiveTTML = LibraryManager.shared.getValidSavedTTML(for: song.id) ?? song.ttmlContent
                 ScrollView {
                     Text(effectiveTTML ?? "No TTML saved for this song.")
                         .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .foregroundStyle(.primary)
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }
-                .background(Color.black.opacity(0.45))
+                .background(colorScheme == .light ? Color(uiColor: .tertiarySystemGroupedBackground) : Color.black.opacity(0.45))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .padding(.horizontal, 16)
                 .padding(.bottom, 12)
             }
-            .background(Color(red: 0.08, green: 0.08, blue: 0.10).ignoresSafeArea())
+            .background((colorScheme == .light ? Color(uiColor: .systemGroupedBackground) : Color(red: 0.08, green: 0.08, blue: 0.10)).ignoresSafeArea())
             .navigationTitle("Saved TTML")
             #if canImport(UIKit)
             .navigationBarTitleDisplayMode(.inline)
@@ -2865,7 +2974,7 @@ struct TTMLViewerSheet: View {
                     Button("Close") {
                         dismiss()
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     let contentToCopy = LibraryManager.shared.getValidSavedTTML(for: song.id) ?? song.ttmlContent
@@ -2887,7 +2996,7 @@ struct TTMLViewerSheet: View {
                                 Text(copied ? "Copied" : "Copy TTML")
                             }
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.primary)
                         }
                     }
                 }

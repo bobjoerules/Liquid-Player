@@ -139,6 +139,7 @@ struct SpicySyllableTokenView: View {
     var isGlowEnabled: Bool = true
     var isBounceEnabled: Bool = true
     var activeColor: Color = .white
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if word.isLetterGroup && !word.letters.isEmpty {
@@ -152,12 +153,48 @@ struct SpicySyllableTokenView: View {
         word.text.trimmingCharacters(in: .whitespaces)
     }
 
+    private var isDefaultColor: Bool {
+        activeColor == .white || activeColor == .black
+    }
+
+    private var inactiveWordColor: Color {
+        if colorScheme == .light {
+            return Color.black.opacity(isBackground ? 0.28 : 0.38)
+        } else {
+            return Color.white.opacity(isBackground ? 0.30 : 0.40)
+        }
+    }
+
+    private var pastWordColor: Color {
+        if isDefaultColor {
+            if colorScheme == .light {
+                return isBackground ? Color.black.opacity(0.70) : Color.black.opacity(0.85)
+            } else {
+                return isBackground ? Color.white.opacity(0.90) : Color.white
+            }
+        } else {
+            return isBackground ? activeColor.opacity(0.70) : activeColor.opacity(0.85)
+        }
+    }
+
+    private var sungWordColor: Color {
+        if isDefaultColor {
+            if colorScheme == .light {
+                return isBackground ? Color.black.opacity(0.80) : Color.black
+            } else {
+                return isBackground ? Color.white.opacity(0.90) : Color.white
+            }
+        } else {
+            return isBackground ? activeColor.opacity(0.85) : activeColor
+        }
+    }
+
     @ViewBuilder
     private var singleSyllableView: some View {
         if !isLineActive {
             let isWordSung = isLinePast || currentTimeMs >= word.endMs
             Text(cleanText)
-                .foregroundStyle(isWordSung ? (isBackground ? (activeColor == .white ? Color.white.opacity(0.90) : activeColor.opacity(0.70)) : (activeColor == .white ? Color.white : activeColor.opacity(0.85))) : Color.white.opacity(isBackground ? 0.30 : 0.40))
+                .foregroundStyle(isWordSung ? pastWordColor : inactiveWordColor)
         } else {
             let isWordSung = currentTimeMs >= word.endMs
             let isWordActive = word.startMs <= currentTimeMs && currentTimeMs < word.endMs
@@ -171,14 +208,14 @@ struct SpicySyllableTokenView: View {
                 let stop1 = max(0.0, min(0.95, p))
                 let stop2 = min(1.0, max(stop1 + 0.05, p + 0.20))
                 let glowProgress = SpicySplines.glowSpline.at(progress)
-                let glowOpacity = isGlowEnabled ? (glowProgress * 0.85) : 0.0
+                let glowOpacity = isGlowEnabled ? (glowProgress * (colorScheme == .light ? 0.30 : 0.85)) : 0.0
 
                 Text(cleanText)
                     .foregroundStyle(
                         LinearGradient(
                             stops: [
                                 .init(color: activeColor.opacity(isBackground ? 0.90 : 0.98), location: stop1),
-                                .init(color: Color.white.opacity(isBackground ? 0.30 : 0.40), location: stop2)
+                                .init(color: inactiveWordColor, location: stop2)
                             ],
                             startPoint: .leading,
                             endPoint: .trailing
@@ -189,10 +226,10 @@ struct SpicySyllableTokenView: View {
                     .shadow(color: isGlowEnabled ? activeColor.opacity(glowOpacity) : Color.clear, radius: isGlowEnabled ? 10 : 0, x: 0, y: 0)
             } else if isWordSung {
                 Text(cleanText)
-                    .foregroundStyle(isBackground ? (activeColor == .white ? Color.white.opacity(0.90) : activeColor.opacity(0.85)) : (activeColor == .white ? Color.white : activeColor))
+                    .foregroundStyle(sungWordColor)
             } else {
                 Text(cleanText)
-                    .foregroundStyle(Color.white.opacity(isBackground ? 0.30 : 0.40))
+                    .foregroundStyle(inactiveWordColor)
             }
         }
     }
@@ -202,7 +239,7 @@ struct SpicySyllableTokenView: View {
         if !isLineActive {
             let isWordSung = isLinePast || currentTimeMs >= word.endMs
             Text(cleanText)
-                .foregroundStyle(isWordSung ? (isBackground ? (activeColor == .white ? Color.white.opacity(0.90) : activeColor.opacity(0.70)) : (activeColor == .white ? Color.white : activeColor.opacity(0.85))) : Color.white.opacity(isBackground ? 0.30 : 0.40))
+                .foregroundStyle(isWordSung ? pastWordColor : inactiveWordColor)
         } else {
             HStack(spacing: 0) {
                 ForEach(word.letters) { letter in
@@ -217,14 +254,14 @@ struct SpicySyllableTokenView: View {
                         let p = -0.15 + 1.30 * progress
                         let stop1 = max(0.0, min(0.95, p))
                         let stop2 = min(1.0, max(stop1 + 0.05, p + 0.20))
-                        let letterGlow = isGlowEnabled ? (SpicySplines.glowSpline.at(progress) * 0.85) : 0.0
+                        let letterGlow = isGlowEnabled ? (SpicySplines.glowSpline.at(progress) * (colorScheme == .light ? 0.30 : 0.85)) : 0.0
 
                         Text(letter.char)
                             .foregroundStyle(
                                 LinearGradient(
                                     stops: [
                                         .init(color: activeColor.opacity(isBackground ? 0.90 : 0.98), location: stop1),
-                                        .init(color: Color.white.opacity(isBackground ? 0.30 : 0.40), location: stop2)
+                                        .init(color: inactiveWordColor, location: stop2)
                                     ],
                                     startPoint: .leading,
                                     endPoint: .trailing
@@ -235,10 +272,10 @@ struct SpicySyllableTokenView: View {
                             .shadow(color: isGlowEnabled ? activeColor.opacity(letterGlow) : Color.clear, radius: isGlowEnabled ? 8 : 0, x: 0, y: 0)
                     } else if isLetterSung {
                         Text(letter.char)
-                            .foregroundStyle(isBackground ? (activeColor == .white ? Color.white.opacity(0.90) : activeColor.opacity(0.85)) : (activeColor == .white ? Color.white : activeColor))
+                            .foregroundStyle(sungWordColor)
                     } else {
                         Text(letter.char)
-                            .foregroundStyle(Color.white.opacity(isBackground ? 0.30 : 0.40))
+                            .foregroundStyle(inactiveWordColor)
                     }
                 }
             }
@@ -288,6 +325,7 @@ struct SpicyDotLineView: View {
     let currentTimeMs: Int
     let isLineActive: Bool
     var isBounceEnabled: Bool = true
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let isPast = (currentTimeMs > line.endMs) || !isLineActive
@@ -322,7 +360,7 @@ struct SpicyDotLineView: View {
 
                 Text("•")
                     .font(.system(size: 42, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(colorScheme == .light ? Color.black : Color.white)
                     .scaleEffect(scale)
                     .offset(y: yOffset)
                     .opacity(opacity)
@@ -450,6 +488,7 @@ struct SpicyLyricLineView: View, Equatable {
     let isBounceEnabled: Bool
     let activeColor: Color
     let onSeek: (Int) -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     static func == (lhs: SpicyLyricLineView, rhs: SpicyLyricLineView) -> Bool {
         lhs.line == rhs.line &&
@@ -523,21 +562,26 @@ struct SpicyLyricLineView: View, Equatable {
                     if line.isSongwriter {
                         Text(line.displayText.isEmpty ? " " : line.displayText)
                             .font(.system(size: 18, weight: .medium, design: fontDesign))
-                            .foregroundStyle(.white.opacity(0.68))
+                            .foregroundStyle(colorScheme == .light ? Color.black.opacity(0.68) : Color.white.opacity(0.68))
                             .multilineTextAlignment(line.oppositeAligned ? .trailing : .leading)
                             .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
                     } else if !line.isWordSynced || line.words.isEmpty {
                         // Clean whole-line display for line-synced songs (do not fake word-by-word karaoke)
+                        let isDefaultColor = (activeColor == .white || activeColor == .black)
+                        let inactiveColor = colorScheme == .light ? Color.black.opacity(line.isBackground ? 0.28 : 0.38) : Color.white.opacity(line.isBackground ? 0.30 : 0.40)
+                        let pastLeadColor = isDefaultColor ? (colorScheme == .light ? Color.black.opacity(0.85) : Color.white.opacity(0.85)) : activeColor.opacity(0.75)
+                        let pastBgColor = isDefaultColor ? (colorScheme == .light ? Color.black.opacity(0.70) : Color.white.opacity(0.75)) : activeColor.opacity(0.65)
+                        let pastColor = line.isBackground ? pastBgColor : pastLeadColor
+                        let activeLineColor = line.isBackground ? activeColor.opacity(0.90) : activeColor
+
                         Text(line.displayText.isEmpty ? " " : line.displayText)
                             .font(lineFont)
                             .tracking(-0.5)
                             .multilineTextAlignment(line.oppositeAligned ? .trailing : .leading)
                             .foregroundStyle(
-                                isLineActive ? (line.isBackground ? activeColor.opacity(0.90) : activeColor)
-                                : (isLinePast ? (line.isBackground ? (activeColor == .white ? .white.opacity(0.75) : activeColor.opacity(0.65)) : (activeColor == .white ? .white.opacity(0.85) : activeColor.opacity(0.75)))
-                                : .white.opacity(line.isBackground ? 0.30 : 0.40))
+                                isLineActive ? activeLineColor : (isLinePast ? pastColor : inactiveColor)
                             )
-                            .shadow(color: isGlowEnabled && isLineActive ? activeColor.opacity(0.40) : Color.clear, radius: isGlowEnabled ? 10 : 0, x: 0, y: 0)
+                            .shadow(color: isGlowEnabled && isLineActive ? activeColor.opacity(colorScheme == .light ? 0.25 : 0.40) : Color.clear, radius: isGlowEnabled ? 10 : 0, x: 0, y: 0)
                             .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
                     } else {
                         // Word groups with preserve-word line wrap and syllable-level progressive physics
@@ -564,7 +608,7 @@ struct SpicyLyricLineView: View, Equatable {
                     if isRomanizationEnabled, let roman = line.romanization {
                         Text(roman)
                             .font(.system(size: line.isBackground ? 16 : 20, weight: .medium, design: fontDesign))
-                            .foregroundStyle(.white.opacity(isLineActive ? 0.72 : 0.45))
+                            .foregroundStyle(colorScheme == .light ? Color.black.opacity(isLineActive ? 0.72 : 0.45) : Color.white.opacity(isLineActive ? 0.72 : 0.45))
                             .multilineTextAlignment(line.oppositeAligned ? .trailing : .leading)
                             .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
                     }
@@ -572,7 +616,7 @@ struct SpicyLyricLineView: View, Equatable {
                     if isTranslationEnabled, let translation = line.translation {
                         Text(translation)
                             .font(.system(size: line.isBackground ? 15 : 18, weight: .medium, design: fontDesign))
-                            .foregroundStyle(.white.opacity(isLineActive ? 0.72 : 0.45))
+                            .foregroundStyle(colorScheme == .light ? Color.black.opacity(isLineActive ? 0.72 : 0.45) : Color.white.opacity(isLineActive ? 0.72 : 0.45))
                             .multilineTextAlignment(line.oppositeAligned ? .trailing : .leading)
                             .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
                     }
@@ -635,17 +679,21 @@ struct SpicyLyricsAttributionFooterView: View {
     let songwriters: [String]
 
     @Environment(\.openURL) private var openURL
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let isLight = colorScheme == .light
+        let baseColor = isLight ? Color.black : Color.white
+
         VStack(spacing: 18) {
             // Subtle glowing divider
             Rectangle()
                 .fill(
                     LinearGradient(
                         stops: [
-                            .init(color: .white.opacity(0.0), location: 0),
-                            .init(color: .white.opacity(0.18), location: 0.5),
-                            .init(color: .white.opacity(0.0), location: 1.0)
+                            .init(color: baseColor.opacity(0.0), location: 0),
+                            .init(color: baseColor.opacity(isLight ? 0.12 : 0.18), location: 0.5),
+                            .init(color: baseColor.opacity(0.0), location: 1.0)
                         ],
                         startPoint: .leading,
                         endPoint: .trailing
@@ -660,12 +708,12 @@ struct SpicyLyricsAttributionFooterView: View {
                 VStack(spacing: 4) {
                     Text("WRITTEN BY")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(baseColor.opacity(isLight ? 0.50 : 0.45))
                         .tracking(1.2)
 
                     Text(songwriters.joined(separator: ", "))
                         .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .foregroundStyle(baseColor.opacity(0.85))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 24)
                 }
@@ -680,18 +728,18 @@ struct SpicyLyricsAttributionFooterView: View {
                 VStack(spacing: 10) {
                     Text("COMMUNITY SYNC")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(baseColor.opacity(isLight ? 0.50 : 0.45))
                         .tracking(1.2)
 
                     HStack(spacing: 12) {
                         if isSamePerson, let user = maker {
-                            userBadge(role: "Synced & Uploaded by", user: user)
+                            userBadge(role: "Synced & Uploaded by", user: user, baseColor: baseColor, isLight: isLight)
                         } else {
                             if let maker = maker {
-                                userBadge(role: "Synced by", user: maker)
+                                userBadge(role: "Synced by", user: maker, baseColor: baseColor, isLight: isLight)
                             }
                             if let uploader = uploader {
-                                userBadge(role: "Uploaded by", user: uploader)
+                                userBadge(role: "Uploaded by", user: uploader, baseColor: baseColor, isLight: isLight)
                             }
                         }
                     }
@@ -706,7 +754,7 @@ struct SpicyLyricsAttributionFooterView: View {
 
                 Text(providerLabel)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(baseColor.opacity(0.55))
             }
             .padding(.top, 2)
         }
@@ -728,7 +776,7 @@ struct SpicyLyricsAttributionFooterView: View {
     }
 
     @ViewBuilder
-    private func userBadge(role: String, user: SpicyAttributionUser) -> some View {
+    private func userBadge(role: String, user: SpicyAttributionUser, baseColor: Color, isLight: Bool) -> some View {
         let avatarUrl = resolveAvatarUrl(id: user.id, avatar: user.avatar)
         let profileUrl = user.url.flatMap { URL(string: $0) }
 
@@ -748,41 +796,41 @@ struct SpicyLyricsAttributionFooterView: View {
                         case .failure:
                             Image(systemName: "person.crop.circle.fill")
                                 .resizable()
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(baseColor.opacity(0.6))
                         case .empty:
                             ProgressView()
-                                .tint(.white)
+                                .tint(baseColor)
                                 .scaleEffect(0.6)
                         @unknown default:
                             Image(systemName: "person.crop.circle.fill")
                                 .resizable()
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(baseColor.opacity(0.6))
                         }
                     }
                     .frame(width: 28, height: 28)
                     .clipShape(Circle())
-                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                    .overlay(Circle().stroke(baseColor.opacity(0.2), lineWidth: 1))
                 } else {
                     Image(systemName: "person.crop.circle.fill")
                         .resizable()
                         .frame(width: 28, height: 28)
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(baseColor.opacity(0.6))
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(role)
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(baseColor.opacity(0.5))
 
                     HStack(spacing: 3) {
                         Text(user.username ?? "Unknown")
                             .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(baseColor)
 
                         if profileUrl != nil {
                             Image(systemName: "arrow.up.right")
                                 .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.5))
+                                .foregroundStyle(baseColor.opacity(0.5))
                         }
                     }
                 }
@@ -791,11 +839,11 @@ struct SpicyLyricsAttributionFooterView: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
+                    .fill(baseColor.opacity(isLight ? 0.05 : 0.08))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(baseColor.opacity(isLight ? 0.08 : 0.12), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

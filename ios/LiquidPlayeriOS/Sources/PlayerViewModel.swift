@@ -79,6 +79,7 @@ struct LyricColorPreset: Identifiable, Hashable {
     let name: String
     let hex: String
     var isRainbow: Bool { id == "rainbow" }
+    var isArtwork: Bool { id == "artwork" }
     var color: Color { Color(hex: hex) }
 
     static let rainbowColors: [Color] = [
@@ -92,16 +93,40 @@ struct LyricColorPreset: Identifiable, Hashable {
         Color(hex: "#E879F9")  // Vivid Purple / Pink
     ]
 
-    static let presets: [LyricColorPreset] = [
-        LyricColorPreset(id: "rainbow", name: "Rainbow", hex: "rainbow"),
-        LyricColorPreset(id: "white", name: "White", hex: "#FFFFFF"),
-        LyricColorPreset(id: "green", name: "Spotify Green", hex: "#1DB954"),
-        LyricColorPreset(id: "cyan", name: "Cyan", hex: "#38BDF8"),
-        LyricColorPreset(id: "purple", name: "Purple", hex: "#C084FC"),
-        LyricColorPreset(id: "coral", name: "Coral", hex: "#FB7185"),
-        LyricColorPreset(id: "gold", name: "Gold", hex: "#FBBF24"),
-        LyricColorPreset(id: "orange", name: "Orange", hex: "#FB923C")
-    ]
+    static func presets(for colorScheme: ColorScheme = .dark) -> [LyricColorPreset] {
+        let isLight = colorScheme == .light
+        return [
+            LyricColorPreset(id: "rainbow", name: "Rainbow", hex: "rainbow"),
+            LyricColorPreset(id: "artwork", name: "Album Art", hex: "artwork"),
+            LyricColorPreset(
+                id: "white",
+                name: isLight ? "Black" : "White",
+                hex: isLight ? "#000000" : "#FFFFFF"
+            ),
+            LyricColorPreset(id: "green", name: "Spotify Green", hex: "#1DB954"),
+            LyricColorPreset(id: "cyan", name: "Cyan", hex: "#38BDF8"),
+            LyricColorPreset(id: "purple", name: "Purple", hex: "#C084FC"),
+            LyricColorPreset(id: "coral", name: "Coral", hex: "#FB7185"),
+            LyricColorPreset(id: "gold", name: "Gold", hex: "#FBBF24"),
+            LyricColorPreset(id: "orange", name: "Orange", hex: "#FB923C")
+        ]
+    }
+
+    static var presets: [LyricColorPreset] {
+        presets(for: .dark)
+    }
+
+    static func isMonochromePreset(_ hex: String) -> Bool {
+        let h = hex.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return h == "#FFFFFF" || h == "#FFF" || h == "#000000" || h == "#000" || h == "WHITE" || h == "BLACK"
+    }
+
+    static func resolveAdaptiveHex(_ hex: String, for colorScheme: ColorScheme) -> String {
+        if isMonochromePreset(hex) {
+            return colorScheme == .light ? "#000000" : "#FFFFFF"
+        }
+        return hex
+    }
 }
 
 enum PlayerBackgroundStyle: String, CaseIterable, Identifiable, Codable {
@@ -111,6 +136,13 @@ enum PlayerBackgroundStyle: String, CaseIterable, Identifiable, Codable {
     case black = "Pure Black"
 
     var id: String { rawValue }
+
+    func displayName(for colorScheme: ColorScheme) -> String {
+        if self == .black {
+            return colorScheme == .light ? "Pure White" : "Pure Black"
+        }
+        return rawValue
+    }
 }
 
 enum LyricsFontDesign: String, CaseIterable, Identifiable, Codable {
@@ -155,6 +187,185 @@ enum LyricsFontSize: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+#if canImport(UIKit)
+enum ArtworkColorExtractor {
+    struct ExtractedColors {
+        let darkHex: String
+        let lightHex: String
+    }
+
+    static func extractColors(from image: UIImage) -> ExtractedColors {
+        guard let cgImage = image.cgImage else {
+            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7")
+        }
+
+        let sampleSize = 36
+        let width = sampleSize
+        let height = sampleSize
+        let bytesPerPixel = 4
+        let bytesPerRow = bytesPerPixel * width
+        let bitsPerComponent = 8
+        var rawData = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
+            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7")
+        }
+
+        guard let context = CGContext(
+            data: &rawData,
+            width: width,
+            height: height,
+            bitsPerComponent: bitsPerComponent,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ) else {
+            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7")
+        }
+
+        context.interpolationQuality = .low
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        struct ColorBucket {
+            var totalR: Double = 0
+            var totalG: Double = 0
+            var totalB: Double = 0
+            var totalSat: Double = 0
+            var totalBright: Double = 0
+            var count: Int = 0
+        }
+
+        // 16 hue bins (22.5 degrees each)
+        var hueBins = [ColorBucket](repeating: ColorBucket(), count: 16)
+        var allPixelsBucket = ColorBucket()
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = (y * width + x) * bytesPerPixel
+                let a = Double(rawData[offset + 3]) / 255.0
+                if a < 0.5 { continue }
+
+                let r = Double(rawData[offset]) / 255.0
+                let g = Double(rawData[offset + 1]) / 255.0
+                let b = Double(rawData[offset + 2]) / 255.0
+
+                allPixelsBucket.totalR += r
+                allPixelsBucket.totalG += g
+                allPixelsBucket.totalB += b
+                allPixelsBucket.count += 1
+
+                let maxC = max(r, max(g, b))
+                let minC = min(r, min(g, b))
+                let delta = maxC - minC
+                let brightness = maxC
+                let saturation = maxC > 0.001 ? delta / maxC : 0.0
+
+                // Exclude near-black, near-white, or unsaturated pixels from hue bins
+                if brightness < 0.12 || (brightness > 0.92 && saturation < 0.15) || saturation < 0.15 {
+                    continue
+                }
+
+                var hue: Double = 0
+                if delta > 0.001 {
+                    if maxC == r {
+                        hue = (g - b) / delta
+                    } else if maxC == g {
+                        hue = 2.0 + (b - r) / delta
+                    } else {
+                        hue = 4.0 + (r - g) / delta
+                    }
+                    hue *= 60.0
+                    if hue < 0 { hue += 360.0 }
+                }
+
+                let binIndex = min(15, max(0, Int((hue / 360.0) * 16.0)))
+                hueBins[binIndex].totalR += r
+                hueBins[binIndex].totalG += g
+                hueBins[binIndex].totalB += b
+                hueBins[binIndex].totalSat += saturation
+                hueBins[binIndex].totalBright += brightness
+                hueBins[binIndex].count += 1
+            }
+        }
+
+        var bestBucket: ColorBucket?
+        var highestScore: Double = -1.0
+
+        for bucket in hueBins where bucket.count > 0 {
+            let avgSat = bucket.totalSat / Double(bucket.count)
+            let avgBright = bucket.totalBright / Double(bucket.count)
+            let score = Double(bucket.count) * (avgSat * 1.5 + 0.3) * (avgBright > 0.3 ? 1.0 : 0.6)
+            if score > highestScore {
+                highestScore = score
+                bestBucket = bucket
+            }
+        }
+
+        let pickedR: Double
+        let pickedG: Double
+        let pickedB: Double
+
+        if let best = bestBucket, best.count >= 4 {
+            pickedR = best.totalR / Double(best.count)
+            pickedG = best.totalG / Double(best.count)
+            pickedB = best.totalB / Double(best.count)
+        } else if allPixelsBucket.count > 0 {
+            pickedR = allPixelsBucket.totalR / Double(allPixelsBucket.count)
+            pickedG = allPixelsBucket.totalG / Double(allPixelsBucket.count)
+            pickedB = allPixelsBucket.totalB / Double(allPixelsBucket.count)
+        } else {
+            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7")
+        }
+
+        let maxC = max(pickedR, max(pickedG, pickedB))
+        let minC = min(pickedR, min(pickedG, pickedB))
+        let delta = maxC - minC
+        var hue: Double = 0
+        if delta > 0.001 {
+            if maxC == pickedR {
+                hue = (pickedG - pickedB) / delta
+            } else if maxC == pickedG {
+                hue = 2.0 + (pickedB - pickedR) / delta
+            } else {
+                hue = 4.0 + (pickedR - pickedG) / delta
+            }
+            hue *= 60.0
+            if hue < 0 { hue += 360.0 }
+        }
+        let sat = maxC > 0.001 ? delta / maxC : 0.0
+        let bright = maxC
+
+        if sat < 0.12 {
+            return ExtractedColors(darkHex: "#FFFFFF", lightHex: "#1C1C1E")
+        }
+
+        let darkSat = min(1.0, max(0.55, sat))
+        let darkBright = max(0.78, min(1.0, bright * 1.35))
+        let darkColor = UIColor(hue: CGFloat(hue / 360.0), saturation: CGFloat(darkSat), brightness: CGFloat(darkBright), alpha: 1.0)
+
+        let lightSat = min(1.0, max(0.70, sat))
+        let lightBright = min(0.48, max(0.25, bright * 0.70))
+        let lightColor = UIColor(hue: CGFloat(hue / 360.0), saturation: CGFloat(lightSat), brightness: CGFloat(lightBright), alpha: 1.0)
+
+        func uiColorToHex(_ color: UIColor) -> String {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
+                let ri = Int(lround(Double(r * 255.0)))
+                let gi = Int(lround(Double(g * 255.0)))
+                let bi = Int(lround(Double(b * 255.0)))
+                return String(format: "#%02X%02X%02X", ri, gi, bi)
+            }
+            return "#38BDF8"
+        }
+
+        return ExtractedColors(
+            darkHex: uiColorToHex(darkColor),
+            lightHex: uiColorToHex(lightColor)
+        )
+    }
+}
+#endif
+
 @MainActor
 final class PlayerViewModel: ObservableObject {
     // MARK: - Published Properties
@@ -163,8 +374,14 @@ final class PlayerViewModel: ObservableObject {
     @Published var durationMs: Int = 0
     @Published var isPlaying: Bool = false
     #if canImport(UIKit)
-    @Published var artwork: UIImage?
+    @Published var artwork: UIImage? {
+        didSet {
+            updateArtworkColors(from: artwork)
+        }
+    }
     #endif
+    @Published var artworkColorDarkHex: String = "#38BDF8"
+    @Published var artworkColorLightHex: String = "#0284C7"
     @Published var nowPlayingTitle: String = "No Track Playing"
     @Published var nowPlayingArtist: String = "Liquid Player"
     @Published var lyricsStatus: String = "Connect with Spotify to begin live playback."
@@ -249,7 +466,7 @@ final class PlayerViewModel: ObservableObject {
     @Published var lyricsColorHex: String = UserDefaults.standard.string(forKey: "LiquidPlayeriOS.lyricsColorHex") ?? "#FFFFFF" {
         didSet {
             UserDefaults.standard.set(lyricsColorHex, forKey: "LiquidPlayeriOS.lyricsColorHex")
-            if lyricsColorHex.lowercased() != "rainbow" {
+            if lyricsColorHex.lowercased() != "rainbow" && lyricsColorHex.lowercased() != "artwork" {
                 if voiceColors["v1"] != lyricsColorHex {
                     voiceColors["v1"] = lyricsColorHex
                 }
@@ -259,6 +476,52 @@ final class PlayerViewModel: ObservableObject {
 
     var isRainbowColorMode: Bool {
         lyricsColorHex.lowercased() == "rainbow"
+    }
+
+    var isArtworkColorMode: Bool {
+        lyricsColorHex.lowercased() == "artwork"
+    }
+
+    func artworkHex(for colorScheme: ColorScheme = .dark) -> String {
+        colorScheme == .light ? artworkColorLightHex : artworkColorDarkHex
+    }
+
+    func artworkColor(for colorScheme: ColorScheme = .dark) -> Color {
+        Color(hex: artworkHex(for: colorScheme))
+    }
+
+    func isArtworkColorBright(for colorScheme: ColorScheme = .dark) -> Bool {
+        let hex = artworkHex(for: colorScheme)
+        let cleanHex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: cleanHex).scanHexInt64(&int)
+        let r, g, b: Double
+        if cleanHex.count == 6 {
+            r = Double((int >> 16) & 0xFF) / 255.0
+            g = Double((int >> 8) & 0xFF) / 255.0
+            b = Double(int & 0xFF) / 255.0
+        } else {
+            r = 1.0; g = 1.0; b = 1.0
+        }
+        let lum = 0.299 * r + 0.587 * g + 0.114 * b
+        return lum > 0.55
+    }
+
+    func updateArtworkColors(from image: UIImage?) {
+        #if canImport(UIKit)
+        guard let image = image else {
+            self.artworkColorDarkHex = "#38BDF8"
+            self.artworkColorLightHex = "#0284C7"
+            return
+        }
+        Task.detached(priority: .userInitiated) {
+            let colors = ArtworkColorExtractor.extractColors(from: image)
+            await MainActor.run {
+                self.artworkColorDarkHex = colors.darkHex
+                self.artworkColorLightHex = colors.lightHex
+            }
+        }
+        #endif
     }
 
     @Published var isMultiVoiceColorsEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isMultiVoiceColorsEnabled") as? Bool ?? true {
@@ -277,7 +540,9 @@ final class PlayerViewModel: ObservableObject {
         if let saved = UserDefaults.standard.dictionary(forKey: "LiquidPlayeriOS.voiceColors") as? [String: String] {
             base.merge(saved) { _, new in new }
         }
-        if let savedLyricHex = UserDefaults.standard.string(forKey: "LiquidPlayeriOS.lyricsColorHex"), savedLyricHex.lowercased() != "rainbow" {
+        if let savedLyricHex = UserDefaults.standard.string(forKey: "LiquidPlayeriOS.lyricsColorHex"),
+           savedLyricHex.lowercased() != "rainbow",
+           savedLyricHex.lowercased() != "artwork" {
             base["v1"] = savedLyricHex
         }
         return base
@@ -287,25 +552,54 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
-    var lyricsColor: Color {
-        if isRainbowColorMode {
-            return LyricColorPreset.rainbowColors.first ?? .white
-        }
-        return Color(hex: voiceColors["v1"] ?? lyricsColorHex)
+    func resolveAdaptiveHex(_ hex: String, for colorScheme: ColorScheme) -> String {
+        LyricColorPreset.resolveAdaptiveHex(hex, for: colorScheme)
     }
 
-    func colorForLine(index: Int, agent: String? = nil, oppositeAligned: Bool = false) -> Color {
+    static func resolveAdaptiveHex(_ hex: String, for colorScheme: ColorScheme) -> String {
+        LyricColorPreset.resolveAdaptiveHex(hex, for: colorScheme)
+    }
+
+    func effectiveLyricsColorHex(for colorScheme: ColorScheme = .dark) -> String {
+        if isArtworkColorMode {
+            return artworkHex(for: colorScheme)
+        }
+        return LyricColorPreset.resolveAdaptiveHex(lyricsColorHex, for: colorScheme)
+    }
+
+    func lyricsColor(for colorScheme: ColorScheme = .dark) -> Color {
+        if isRainbowColorMode {
+            return LyricColorPreset.rainbowColors.first ?? (colorScheme == .light ? .black : .white)
+        }
+        if isArtworkColorMode {
+            return artworkColor(for: colorScheme)
+        }
+        let rawHex = voiceColors["v1"] ?? lyricsColorHex
+        return Color(hex: LyricColorPreset.resolveAdaptiveHex(rawHex, for: colorScheme))
+    }
+
+    var lyricsColor: Color {
+        lyricsColor(for: .dark)
+    }
+
+    func colorForLine(index: Int, agent: String? = nil, oppositeAligned: Bool = false, colorScheme: ColorScheme = .dark) -> Color {
         if isRainbowColorMode {
             let colors = LyricColorPreset.rainbowColors
             let safeIndex = max(0, index) % colors.count
             return colors[safeIndex]
         }
-        return colorForVoice(agent, oppositeAligned: oppositeAligned)
+        return colorForVoice(agent, oppositeAligned: oppositeAligned, colorScheme: colorScheme)
     }
 
-    func colorForVoice(_ agent: String?, oppositeAligned: Bool = false) -> Color {
-        let v1Hex = voiceColors["v1"] ?? (isRainbowColorMode ? "#FFFFFF" : lyricsColorHex)
-        let defaultColor = Color(hex: v1Hex)
+    func colorForVoice(_ agent: String?, oppositeAligned: Bool = false, colorScheme: ColorScheme = .dark) -> Color {
+        let defaultColor: Color
+        if isArtworkColorMode {
+            defaultColor = artworkColor(for: colorScheme)
+        } else {
+            let rawV1Hex = voiceColors["v1"] ?? (isRainbowColorMode ? "#FFFFFF" : lyricsColorHex)
+            let resolvedV1Hex = LyricColorPreset.resolveAdaptiveHex(rawV1Hex, for: colorScheme)
+            defaultColor = Color(hex: resolvedV1Hex)
+        }
 
         guard isMultiVoiceColorsEnabled else {
             return defaultColor
@@ -339,7 +633,7 @@ final class PlayerViewModel: ObservableObject {
         }
 
         if let hex = voiceColors[key], !hex.isEmpty {
-            return Color(hex: hex)
+            return Color(hex: LyricColorPreset.resolveAdaptiveHex(hex, for: colorScheme))
         }
 
         switch key {

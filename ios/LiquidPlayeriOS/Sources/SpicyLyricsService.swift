@@ -264,6 +264,15 @@ actor SpicyLyricsService {
             throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid track ID."])
         }
 
+        let apiKey = APIConfig.spicyLyricsApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty else {
+            throw NSError(
+                domain: "LiquidPlayer.SpicyLyrics",
+                code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "Spicy Lyrics API key not configured. Add Liquid Player from \(APIConfig.spicyLyricsCatalogUrl) to get your personal client key."]
+            )
+        }
+
         if let cached = cache[cleanId] {
             return cached
         }
@@ -280,7 +289,7 @@ actor SpicyLyricsService {
 
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
-            request.setValue("Bearer \(APIConfig.spicyLyricsApiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
 
             let (data, response) = try await URLSession.shared.data(for: request)

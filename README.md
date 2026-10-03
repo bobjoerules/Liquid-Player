@@ -26,6 +26,24 @@ Liquid Player is a synchronized lyrics and music player companion for iOS, power
 
 ---
 
+## API Keys & Configuration
+
+### Spicy Lyrics API Key
+
+Liquid Player uses syllable-synchronized lyrics provided by the **Spicy Lyrics API**.
+
+You do not need to create a custom application from scratch or use up your application slots. Liquid Player is listed in the official Spicy Lyrics catalog:
+
+👉 **[Add Liquid Player on the Spicy Lyrics Catalog](https://developers.spicylyrics.org/catalog/liquid-player)**
+
+- **Per-User Keys**: Each person who adds Liquid Player from the catalog receives their own dedicated application and client key (`sl_pk_...`).
+- **No App Slot Usage**: It does not consume any of your personal developer application slots.
+- **Rate Limit**: 60 requests / 50 seconds per person.
+
+After adding Liquid Player on the catalog page, copy your client key and paste it in Liquid Player under **Settings > API Configuration > Spicy Lyrics API Key**.
+
+---
+
 ## Local Development & Setup
 
 This repository does not track `.xcodeproj` or `.xcworkspace` files in git (they are ignored via [.gitignore](.gitignore)). Instead, the Xcode project is declaratively defined in [ios/project.yml](ios/project.yml) and generated on demand using **[XcodeGen](https://github.com/yonaskolb/XcodeGen)**.

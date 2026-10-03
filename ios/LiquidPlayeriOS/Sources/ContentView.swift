@@ -2468,51 +2468,34 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            Section("Lyrics Synchronization") {
-                Toggle("Auto-Sync Checker", isOn: $viewModel.isAutoSyncCheckerEnabled)
-                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
-
-                HStack {
-                    Text("Manual Offset")
-                    Spacer()
-                    Text("\(viewModel.lyricOffsetMs >= 0 ? "+" : "")\(viewModel.lyricOffsetMs) ms")
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack(spacing: 8) {
-                    Button("-100ms") { viewModel.adjustLyricOffset(by: -100) }.buttonStyle(.bordered)
-                    Button("-50ms") { viewModel.adjustLyricOffset(by: -50) }.buttonStyle(.bordered)
-                    Button("Reset") { viewModel.resetLyricOffset() }.buttonStyle(.borderedProminent).tint(.secondary)
-                    Button("+50ms") { viewModel.adjustLyricOffset(by: 50) }.buttonStyle(.bordered)
-                    Button("+100ms") { viewModel.adjustLyricOffset(by: 100) }.buttonStyle(.bordered)
-                }
-
-                Button {
-                    Task {
-                        await viewModel.checkAndResyncLyrics(force: true)
-                    }
-                } label: {
-                    HStack {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                        Text(viewModel.syncAudit.isAuditing ? "Auditing Sync..." : "Check & Resync Now")
-                        Spacer()
-                        Text(viewModel.syncAudit.statusMessage)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
             Section("API Configuration") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Spicy Lyrics API Key")
                         .font(.system(size: isMac ? 15 : 13, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    SecureField("Spicy Lyrics Key", text: $spicyLyricsKey)
+                    SecureField("Paste your Client Key (sl_pk_...)", text: $spicyLyricsKey)
                         .font(.system(size: isMac ? 14 : 13, design: .monospaced))
                         .autocorrectionDisabled(true)
                         .textInputAutocapitalization(.never)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Add Liquid Player in the Spicy Lyrics catalog to get your personal Client Key. None of it uses your application slots:")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if let catalogUrl = URL(string: APIConfig.spicyLyricsCatalogUrl) {
+                            Link(destination: catalogUrl) {
+                                HStack(spacing: 4) {
+                                    Text("Open Catalog Page (developers.spicylyrics.org)")
+                                        .fontWeight(.semibold)
+                                    Image(systemName: "arrow.up.right.square")
+                                }
+                                .font(.system(size: 12))
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -2559,7 +2542,7 @@ struct SettingsView: View {
                 HStack {
                     Text("Version")
                     Spacer()
-                    Text("1.1.2 (Beta)")
+                    Text("\((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.1.4") (Beta)")
                         .foregroundStyle(.secondary)
                 }
                 HStack {

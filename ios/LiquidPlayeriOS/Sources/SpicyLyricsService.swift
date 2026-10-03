@@ -1,16 +1,79 @@
 import Foundation
 
+// MARK: - Decoding Helpers
+
+private func decodeFirst<T: Decodable, K: CodingKey>(from container: KeyedDecodingContainer<K>, keys: [K]) -> T? {
+    for key in keys {
+        if let val = try? container.decodeIfPresent(T.self, forKey: key) {
+            return val
+        }
+    }
+    return nil
+}
+
+private func decodeFlexibleDouble<K: CodingKey>(from container: KeyedDecodingContainer<K>, keys: [K]) -> Double? {
+    for key in keys {
+        if let doubleVal = try? container.decodeIfPresent(Double.self, forKey: key) {
+            return doubleVal
+        }
+        if let intVal = try? container.decodeIfPresent(Int.self, forKey: key) {
+            return Double(intVal)
+        }
+        if let strVal = try? container.decodeIfPresent(String.self, forKey: key), let parsed = Double(strVal) {
+            return parsed
+        }
+    }
+    return nil
+}
+
+private struct AnyDecodableDummy: Decodable {}
+
+private func decodeLossyArray<T: Decodable, K: CodingKey>(from container: KeyedDecodingContainer<K>, keys: [K]) -> [T]? {
+    for key in keys {
+        if var unkeyed = try? container.nestedUnkeyedContainer(forKey: key) {
+            var results: [T] = []
+            while !unkeyed.isAtEnd {
+                if let item = try? unkeyed.decode(T.self) {
+                    results.append(item)
+                } else {
+                    _ = try? unkeyed.decode(AnyDecodableDummy.self)
+                }
+            }
+            if !results.isEmpty {
+                return results
+            }
+        }
+    }
+    return nil
+}
+
 // MARK: - Spicy Lyrics API Decodable Models
 
 struct SpicyLyricsEnvelope: Decodable {
     let Body: SpicyLyricsBody?
     let Status: Int?
     let type: String?
+    let UploadAttribution: SpicyUploadAttributionDTO?
+    let uploader: SpicyAttributionUserDTO?
+    let maker: SpicyAttributionUserDTO?
 
     enum CodingKeys: String, CodingKey {
-        case Body
-        case Status
-        case type = "Type"
+        case Body, body, data, Data, result, Result
+        case Status, status, statusCode
+        case type = "Type", typeLower = "type"
+        case UploadAttribution, uploadAttributionLower = "uploadAttribution", attribution, Attribution, credits, Credits
+        case uploader, Uploader
+        case maker, Maker
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.Body = decodeFirst(from: container, keys: [.Body, .body, .data, .Data, .result, .Result])
+        self.Status = decodeFirst(from: container, keys: [.Status, .status, .statusCode])
+        self.type = decodeFirst(from: container, keys: [.type, .typeLower])
+        self.UploadAttribution = decodeFirst(from: container, keys: [.UploadAttribution, .uploadAttributionLower, .attribution, .Attribution, .credits, .Credits])
+        self.uploader = decodeFirst(from: container, keys: [.uploader, .Uploader])
+        self.maker = decodeFirst(from: container, keys: [.maker, .Maker])
     }
 }
 
@@ -29,54 +92,89 @@ struct SpicyLyricsBody: Decodable {
     enum CodingKeys: String, CodingKey {
         case id
         case source
-        case SongWriters
-        case songWritersLower = "songwriters"
-        case type = "Type"
-        case typeLower = "type"
-        case StartTime
-        case EndTime
-        case Content
-        case contentLower = "content"
-        case Lines
-        case linesLower = "lines"
-        case UploadAttribution
+        case SongWriters, songWritersLower = "songwriters"
+        case type = "Type", typeLower = "type"
+        case StartTime, startTime
+        case EndTime, endTime
+        case Content, contentLower = "content"
+        case Lines, linesLower = "lines"
+        case UploadAttribution, uploadAttributionLower = "uploadAttribution", attribution, Attribution, credits, Credits
+        case uploader, Uploader
+        case maker, Maker
         case plainLyrics
         case text
         case lyrics
+    }
+
+    init(
+        id: String?,
+        source: String?,
+        SongWriters: [String]?,
+        type: String?,
+        StartTime: Double?,
+        EndTime: Double?,
+        Content: [SpicyContentLine]?,
+        UploadAttribution: SpicyUploadAttributionDTO?,
+        plainLyrics: String?,
+        text: String?
+    ) {
+        self.id = id
+        self.source = source
+        self.SongWriters = SongWriters
+        self.type = type
+        self.StartTime = StartTime
+        self.EndTime = EndTime
+        self.Content = Content
+        self.UploadAttribution = UploadAttribution
+        self.plainLyrics = plainLyrics
+        self.text = text
+    }
+
+    func withUploadAttribution(_ attr: SpicyUploadAttributionDTO?) -> SpicyLyricsBody {
+        SpicyLyricsBody(
+            id: id,
+            source: source,
+            SongWriters: SongWriters,
+            type: type,
+            StartTime: StartTime,
+            EndTime: EndTime,
+            Content: Content,
+            UploadAttribution: attr ?? UploadAttribution,
+            plainLyrics: plainLyrics,
+            text: text
+        )
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try? container.decodeIfPresent(String.self, forKey: .id)
         self.source = try? container.decodeIfPresent(String.self, forKey: .source)
-        self.SongWriters = (try? container.decodeIfPresent([String].self, forKey: .SongWriters)) ??
-                          (try? container.decodeIfPresent([String].self, forKey: .songWritersLower))
-        self.type = (try? container.decodeIfPresent(String.self, forKey: .type)) ??
-                    (try? container.decodeIfPresent(String.self, forKey: .typeLower))
-        self.StartTime = try? container.decodeIfPresent(Double.self, forKey: .StartTime)
-        self.EndTime = try? container.decodeIfPresent(Double.self, forKey: .EndTime)
-        self.UploadAttribution = try? container.decodeIfPresent(SpicyUploadAttributionDTO.self, forKey: .UploadAttribution)
-        self.plainLyrics = (try? container.decodeIfPresent(String.self, forKey: .plainLyrics)) ??
-                           (try? container.decodeIfPresent(String.self, forKey: .lyrics))
+        self.SongWriters = decodeFirst(from: container, keys: [.SongWriters, .songWritersLower])
+        self.type = decodeFirst(from: container, keys: [.type, .typeLower])
+        self.StartTime = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime])
+        self.EndTime = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime])
+
+        var resolvedUploadAttr: SpicyUploadAttributionDTO? = decodeFirst(from: container, keys: [.UploadAttribution, .uploadAttributionLower, .attribution, .Attribution, .credits, .Credits])
+        if resolvedUploadAttr == nil {
+            let rootUploader: SpicyAttributionUserDTO? = decodeFirst(from: container, keys: [.uploader, .Uploader])
+            let rootMaker: SpicyAttributionUserDTO? = decodeFirst(from: container, keys: [.maker, .Maker])
+            if rootUploader != nil || rootMaker != nil {
+                resolvedUploadAttr = SpicyUploadAttributionDTO(uploader: rootUploader, maker: rootMaker)
+            }
+        }
+        self.UploadAttribution = resolvedUploadAttr
+
+        self.plainLyrics = decodeFirst(from: container, keys: [.plainLyrics, .lyrics])
         self.text = try? container.decodeIfPresent(String.self, forKey: .text)
 
-        if let lines = try? container.decodeIfPresent([SpicyContentLine].self, forKey: .Content) {
+        let lineKeys: [CodingKeys] = [.Content, .Lines, .linesLower, .contentLower]
+        if let lines: [SpicyContentLine] = decodeFirst(from: container, keys: lineKeys) {
             self.Content = lines
-        } else if let lines = try? container.decodeIfPresent([SpicyContentLine].self, forKey: .Lines) {
-            self.Content = lines
-        } else if let lines = try? container.decodeIfPresent([SpicyContentLine].self, forKey: .linesLower) {
-            self.Content = lines
-        } else if let lines = try? container.decodeIfPresent([SpicyContentLine].self, forKey: .contentLower) {
-            self.Content = lines
-        } else if let stringArray = (try? container.decodeIfPresent([String].self, forKey: .Content)) ??
-                                    (try? container.decodeIfPresent([String].self, forKey: .Lines)) ??
-                                    (try? container.decodeIfPresent([String].self, forKey: .linesLower)) ??
-                                    (try? container.decodeIfPresent([String].self, forKey: .contentLower)) {
+        } else if let lossyLines: [SpicyContentLine] = decodeLossyArray(from: container, keys: lineKeys) {
+            self.Content = lossyLines
+        } else if let stringArray: [String] = decodeFirst(from: container, keys: lineKeys) {
             self.Content = stringArray.map { SpicyContentLine(text: $0) }
-        } else if let singleString = (try? container.decodeIfPresent(String.self, forKey: .Content)) ??
-                                     (try? container.decodeIfPresent(String.self, forKey: .Lines)) ??
-                                     (try? container.decodeIfPresent(String.self, forKey: .linesLower)) ??
-                                     (try? container.decodeIfPresent(String.self, forKey: .contentLower)) {
+        } else if let singleString: String = decodeFirst(from: container, keys: lineKeys) {
             self.Content = singleString.components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -92,17 +190,81 @@ struct SpicyLyricsBody: Decodable {
     }
 }
 
-struct SpicyUploadAttributionDTO: Codable {
+struct SpicyUploadAttributionDTO: Decodable {
     let Uploader: SpicyAttributionUserDTO?
     let Maker: SpicyAttributionUserDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case Uploader, uploader, uploadUser = "upload_user", contributor, author
+        case Maker, maker, syncMaker = "sync_maker", syncedBy = "synced_by", editor
+    }
+
+    init(uploader: SpicyAttributionUserDTO?, maker: SpicyAttributionUserDTO?) {
+        self.Uploader = uploader
+        self.Maker = maker
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.Uploader = decodeFirst(from: container, keys: [.Uploader, .uploader, .uploadUser, .contributor, .author])
+        self.Maker = decodeFirst(from: container, keys: [.Maker, .maker, .syncMaker, .syncedBy, .editor])
+    }
 }
 
-struct SpicyAttributionUserDTO: Codable {
+struct SpicyAttributionUserDTO: Decodable {
     let id: String?
     let username: String?
     let avatar: String?
     let hasProfileBanner: Bool?
     let url: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, Id, ID, userId, user_id
+        case username, Username, name, Name, displayName, DisplayName, user, User
+        case avatar, Avatar, avatarUrl, avatar_url, AvatarUrl, image, Image
+        case hasProfileBanner, has_profile_banner
+        case url, Url, profile, Profile, profileUrl, profile_url
+    }
+
+    init(id: String?, username: String?, avatar: String?, hasProfileBanner: Bool?, url: String?) {
+        self.id = id
+        self.username = username
+        self.avatar = avatar
+        self.hasProfileBanner = hasProfileBanner
+        self.url = url
+    }
+
+    init(from decoder: Decoder) throws {
+        if let singleString = try? decoder.singleValueContainer().decode(String.self) {
+            let clean = singleString.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.init(id: nil, username: clean.isEmpty ? nil : clean, avatar: nil, hasProfileBanner: nil, url: nil)
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        var resolvedId: String? = decodeFirst(from: container, keys: [.id, .Id, .ID, .userId, .user_id])
+        if resolvedId == nil {
+            if let intId: Int = decodeFirst(from: container, keys: [.id, .Id, .ID, .userId, .user_id]) {
+                resolvedId = String(intId)
+            } else if let doubleId: Double = decodeFirst(from: container, keys: [.id, .Id, .ID, .userId, .user_id]) {
+                resolvedId = String(format: "%.0f", doubleId)
+            }
+        }
+
+        let resolvedUsername: String? = decodeFirst(from: container, keys: [.username, .Username, .name, .Name, .displayName, .DisplayName, .user, .User])
+        let cleanUsername = resolvedUsername?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedAvatar: String? = decodeFirst(from: container, keys: [.avatar, .Avatar, .avatarUrl, .avatar_url, .AvatarUrl, .image, .Image])
+        let resolvedBanner: Bool? = decodeFirst(from: container, keys: [.hasProfileBanner, .has_profile_banner])
+        let resolvedUrl: String? = decodeFirst(from: container, keys: [.url, .Url, .profile, .Profile, .profileUrl, .profile_url])
+
+        self.init(
+            id: resolvedId,
+            username: cleanUsername,
+            avatar: resolvedAvatar,
+            hasProfileBanner: resolvedBanner,
+            url: resolvedUrl
+        )
+    }
 }
 
 struct SpicyContentLine: Decodable {
@@ -160,18 +322,16 @@ struct SpicyContentLine: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case type = "Type"
-        case OppositeAligned
+        case typeLower = "type"
+        case OppositeAligned, oppositeAligned
         case agent
-        case Lead
-        case Background
-        case StartTime
-        case EndTime
-        case Text
-        case textLower = "text"
-        case TransliteratedText
-        case transliteratedTextLower = "transliteratedText"
-        case TranslatedText
-        case translatedTextLower = "translatedText"
+        case Lead, lead
+        case Background, background
+        case StartTime, startTime, start, Start, begin, Begin
+        case EndTime, endTime, end, End
+        case Text, text
+        case TransliteratedText, transliteratedText
+        case TranslatedText, translatedText
     }
 
     init(from decoder: Decoder) throws {
@@ -181,19 +341,16 @@ struct SpicyContentLine: Decodable {
         }
 
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let type = try? container.decodeIfPresent(String.self, forKey: .type)
-        let OppositeAligned = try? container.decodeIfPresent(Bool.self, forKey: .OppositeAligned)
+        let type: String? = decodeFirst(from: container, keys: [.type, .typeLower])
+        let OppositeAligned: Bool? = decodeFirst(from: container, keys: [.OppositeAligned, .oppositeAligned])
         let agent = try? container.decodeIfPresent(String.self, forKey: .agent)
-        let Lead = try? container.decodeIfPresent(SpicyVocalGroup.self, forKey: .Lead)
-        let Background = try? container.decodeIfPresent([SpicyVocalGroup].self, forKey: .Background)
-        let StartTime = try? container.decodeIfPresent(Double.self, forKey: .StartTime)
-        let EndTime = try? container.decodeIfPresent(Double.self, forKey: .EndTime)
-        let Text = (try? container.decodeIfPresent(String.self, forKey: .Text)) ??
-                    (try? container.decodeIfPresent(String.self, forKey: .textLower))
-        let TransliteratedText = (try? container.decodeIfPresent(String.self, forKey: .TransliteratedText)) ??
-                                 (try? container.decodeIfPresent(String.self, forKey: .transliteratedTextLower))
-        let TranslatedText = (try? container.decodeIfPresent(String.self, forKey: .TranslatedText)) ??
-                             (try? container.decodeIfPresent(String.self, forKey: .translatedTextLower))
+        let Lead: SpicyVocalGroup? = decodeFirst(from: container, keys: [.Lead, .lead])
+        let Background: [SpicyVocalGroup]? = decodeFirst(from: container, keys: [.Background, .background])
+        let StartTime = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin])
+        let EndTime = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End])
+        let Text: String? = decodeFirst(from: container, keys: [.Text, .text])
+        let TransliteratedText: String? = decodeFirst(from: container, keys: [.TransliteratedText, .transliteratedText])
+        let TranslatedText: String? = decodeFirst(from: container, keys: [.TranslatedText, .translatedText])
 
         self.init(
             type: type,
@@ -210,21 +367,68 @@ struct SpicyContentLine: Decodable {
     }
 }
 
-struct SpicyVocalGroup: Codable {
+struct SpicyVocalGroup: Decodable {
     let StartTime: Double?
     let EndTime: Double?
     let OppositeAligned: Bool?
     let TransliteratedText: String?
     let TranslatedText: String?
     let Syllables: [SpicySyllable]?
+
+    enum CodingKeys: String, CodingKey {
+        case StartTime, startTime, start, Start, begin, Begin
+        case EndTime, endTime, end, End
+        case OppositeAligned, oppositeAligned
+        case TransliteratedText, transliteratedText
+        case TranslatedText, translatedText
+        case Syllables, syllables, words, Words
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.StartTime = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin])
+        self.EndTime = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End])
+        self.OppositeAligned = decodeFirst(from: container, keys: [.OppositeAligned, .oppositeAligned])
+        self.TransliteratedText = decodeFirst(from: container, keys: [.TransliteratedText, .transliteratedText])
+        self.TranslatedText = decodeFirst(from: container, keys: [.TranslatedText, .translatedText])
+        self.Syllables = decodeFirst(from: container, keys: [.Syllables, .syllables, .words, .Words])
+    }
 }
 
-struct SpicySyllable: Codable {
+struct SpicySyllable: Decodable {
     let Text: String
     let StartTime: Double
     let EndTime: Double
     let IsPartOfWord: Bool?
     let TransliteratedText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case Text, text
+        case StartTime, startTime, start, Start, begin, Begin
+        case EndTime, endTime, end, End
+        case IsPartOfWord, isPartOfWord
+        case TransliteratedText, transliteratedText
+    }
+
+    init(from decoder: Decoder) throws {
+        if let singleString = try? decoder.singleValueContainer().decode(String.self) {
+            let clean = singleString.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.Text = clean
+            self.StartTime = 0.0
+            self.EndTime = 0.0
+            self.IsPartOfWord = false
+            self.TransliteratedText = nil
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.Text = decodeFirst(from: container, keys: [.Text, .text]) ?? ""
+        let start = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin]) ?? 0.0
+        self.StartTime = start
+        self.EndTime = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End]) ?? (start + 0.3)
+        self.IsPartOfWord = decodeFirst(from: container, keys: [.IsPartOfWord, .isPartOfWord])
+        self.TransliteratedText = decodeFirst(from: container, keys: [.TransliteratedText, .transliteratedText])
+    }
 }
 
 // MARK: - Service Implementation
@@ -234,19 +438,44 @@ actor SpicyLyricsService {
     
     private var cache: [String: ParsedLyrics] = [:]
     private var inFlightTasks: [String: Task<ParsedLyrics, Error>] = [:]
+    private let session: URLSession
+
+    private init() {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 12
+        config.timeoutIntervalForResource = 20
+        self.session = URLSession(configuration: config)
+    }
+
+    static func cleanTrackId(_ trackId: String) -> String {
+        let stripped = trackId
+            .replacingOccurrences(of: "spotify:track:", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let match = stripped.range(of: #"[A-Za-z0-9]{22}"#, options: .regularExpression) {
+            return String(stripped[match])
+        }
+        return stripped
+    }
 
     func getCachedLyrics(for trackId: String) -> ParsedLyrics? {
-        let cleanId = trackId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanId = Self.cleanTrackId(trackId)
         return cache[cleanId]
     }
 
     func isLyricsCached(for trackId: String) -> Bool {
-        let cleanId = trackId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanId = Self.cleanTrackId(trackId)
         return cache[cleanId] != nil
     }
 
+    func clearCache(for trackId: String) {
+        let cleanId = Self.cleanTrackId(trackId)
+        cache.removeValue(forKey: cleanId)
+        inFlightTasks[cleanId]?.cancel()
+        inFlightTasks.removeValue(forKey: cleanId)
+    }
+
     func prefetchLyrics(for trackId: String) async {
-        let cleanId = trackId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanId = Self.cleanTrackId(trackId)
         guard !cleanId.isEmpty else { return }
         if cache[cleanId] != nil { return }
         _ = try? await fetchLyrics(for: cleanId)
@@ -259,13 +488,17 @@ actor SpicyLyricsService {
     }
 
     func fetchLyrics(for trackId: String) async throws -> ParsedLyrics {
-        let cleanId = trackId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanId = Self.cleanTrackId(trackId)
         guard !cleanId.isEmpty else {
             throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid track ID."])
         }
 
-        let apiKey = APIConfig.spicyLyricsApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !apiKey.isEmpty else {
+        let rawApiKey = APIConfig.spicyLyricsApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanApiKey = rawApiKey
+            .replacingOccurrences(of: "Bearer ", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'\t\n\r "))
+
+        guard !cleanApiKey.isEmpty else {
             throw NSError(
                 domain: "LiquidPlayer.SpicyLyrics",
                 code: 401,
@@ -283,37 +516,140 @@ actor SpicyLyricsService {
         }
 
         let task = Task<ParsedLyrics, Error> {
-            guard let url = URL(string: "https://api.spicylyrics.org/v1/lyrics/\(cleanId)") else {
-                throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL."])
+            let urlString = "https://api.spicylyrics.org/v1/lyrics/\(cleanId)"
+            guard let requestUrl = URL(string: urlString) else {
+                throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid request URL for \(cleanId)."])
             }
 
-            var request = URLRequest(url: url)
+            var request = URLRequest(url: requestUrl)
             request.httpMethod = "GET"
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("Bearer \(cleanApiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue(cleanApiKey, forHTTPHeaderField: "Client-Key")
+            request.setValue(cleanApiKey, forHTTPHeaderField: "X-Client-Key")
+            request.setValue(cleanApiKey, forHTTPHeaderField: "X-API-Key")
+            request.setValue("LiquidPlayer/1.1.4 (iOS; SpicyLyrics-Client)", forHTTPHeaderField: "User-Agent")
+            request.setValue("application/json, text/xml, application/xml;q=0.9, */*;q=0.8", forHTTPHeaderField: "Accept")
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: -1, userInfo: [NSLocalizedDescriptionKey: "Network error"])
-            }
+            var lastError: Error?
+            // Attempt request with 1 retry for transient network glitches
+            for attempt in 1...2 {
+                do {
+                    let (data, response) = try await session.data(for: request)
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: -1, userInfo: [NSLocalizedDescriptionKey: "Network error"])
+                    }
 
-            guard httpResponse.statusCode == 200 else {
-                if httpResponse.statusCode == 404 {
-                    throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 404, userInfo: [NSLocalizedDescriptionKey: "Lyrics not found for this track."])
+                    if httpResponse.statusCode == 404 {
+                        throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 404, userInfo: [NSLocalizedDescriptionKey: "Lyrics not found for \(cleanId)."])
+                    }
+
+                    guard httpResponse.statusCode == 200 else {
+                        if httpResponse.statusCode == 503 {
+                            throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 503, userInfo: [NSLocalizedDescriptionKey: "Upstream lyrics service temporarily unavailable."])
+                        }
+                        throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"])
+                    }
+
+                        // 1. Direct TTML / XML response check
+                        let textStr = String(data: data, encoding: .utf8)
+                        let trimmedText = textStr?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        if trimmedText.hasPrefix("<") || trimmedText.contains("<?xml") || (trimmedText.contains("<tt") && !trimmedText.hasPrefix("{")) {
+                            if let parsed = try? TTMLLyricsParser.parse(data: data), !parsed.lines.isEmpty {
+                                return parsed
+                            }
+                        }
+
+                        // 2. Safely parse JSON dictionary to extract attribution and check embedded TTML without dropping credits
+                        let jsonDict = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+                        let extractedAttr = Self.extractAttribution(from: jsonDict)
+                        let extractedSongwriters = Self.extractSongwriters(from: jsonDict)
+
+                        // Check candidate embedded TTML string keys
+                        let ttmlKeys = ["ttml", "TTML", "xml", "XML"]
+                        for key in ttmlKeys {
+                            let candidateXml: String? = (jsonDict[key] as? String) ?? ((jsonDict["body"] as? [String: Any])?[key] as? String) ?? ((jsonDict["data"] as? [String: Any])?[key] as? String)
+                            if let xml = candidateXml, xml.contains("<tt") {
+                                if let parsed = try? TTMLLyricsParser.parse(data: Data(xml.utf8)), !parsed.lines.isEmpty {
+                                    let finalAttr = extractedAttr ?? parsed.attribution
+                                    return ParsedLyrics(
+                                        lines: parsed.lines,
+                                        songwriters: !parsed.songwriters.isEmpty ? parsed.songwriters : extractedSongwriters,
+                                        source: parsed.source ?? "Spicy Lyrics",
+                                        attribution: finalAttr,
+                                        isStatic: parsed.isStatic
+                                    )
+                                }
+                            }
+                        }
+
+                        // 3. Flexible JSON decoding: Try envelope first, then direct body
+                        let body: SpicyLyricsBody
+                        if let envelope = try? JSONDecoder().decode(SpicyLyricsEnvelope.self, from: data), let envBody = envelope.Body {
+                            if envBody.UploadAttribution == nil {
+                                let envelopeAttr = envelope.UploadAttribution ?? (
+                                    (envelope.uploader != nil || envelope.maker != nil) ? SpicyUploadAttributionDTO(uploader: envelope.uploader, maker: envelope.maker) : nil
+                                )
+                                body = envBody.withUploadAttribution(envelopeAttr)
+                            } else {
+                                body = envBody
+                            }
+                        } else if let directBody = try? JSONDecoder().decode(SpicyLyricsBody.self, from: data),
+                                  (directBody.Content != nil || directBody.plainLyrics != nil || directBody.text != nil) {
+                            body = directBody
+                        } else if let bodyDict = (jsonDict["Body"] as? [String: Any]) ?? (jsonDict["body"] as? [String: Any]) ?? (jsonDict["data"] as? [String: Any]),
+                                  let bodyData = try? JSONSerialization.data(withJSONObject: bodyDict),
+                                  let parsedDictBody = try? JSONDecoder().decode(SpicyLyricsBody.self, from: bodyData) {
+                            body = parsedDictBody
+                        } else {
+                            throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: -2, userInfo: [NSLocalizedDescriptionKey: "Empty or unrecognized Spicy Lyrics response format."])
+                        }
+
+                        // 4. If plainLyrics or text contains TTML XML, parse it with TTMLLyricsParser while PRESERVING attribution!
+                        if let ttmlText = body.plainLyrics ?? body.text, ttmlText.contains("<tt") {
+                            if let parsed = try? TTMLLyricsParser.parse(data: Data(ttmlText.utf8)), !parsed.lines.isEmpty {
+                                let finalAttr = extractedAttr ?? self.resolveAttribution(from: body.UploadAttribution) ?? parsed.attribution
+                                let resolvedSrc: String
+                                if let rawSource = body.source?.trimmingCharacters(in: .whitespacesAndNewlines), !rawSource.isEmpty {
+                                    if rawSource.lowercased().contains("community") {
+                                        resolvedSrc = "Spicy Lyrics Community"
+                                    } else if rawSource.lowercased().contains("spicy") {
+                                        resolvedSrc = finalAttr != nil ? "Spicy Lyrics Community" : "Spicy Lyrics"
+                                    } else {
+                                        resolvedSrc = "Spicy Lyrics (\(rawSource.replacingOccurrences(of: "_", with: " ").capitalized))"
+                                    }
+                                } else if finalAttr != nil {
+                                    resolvedSrc = "Spicy Lyrics Community"
+                                } else {
+                                    resolvedSrc = parsed.source ?? "Spicy Lyrics"
+                                }
+                                return ParsedLyrics(
+                                    lines: parsed.lines,
+                                    songwriters: !parsed.songwriters.isEmpty ? parsed.songwriters : (body.SongWriters ?? extractedSongwriters),
+                                    source: resolvedSrc,
+                                    attribution: finalAttr,
+                                    isStatic: parsed.isStatic
+                                )
+                            }
+                        }
+
+                        let parsed = self.parseLyricsBody(body, overrideAttribution: extractedAttr)
+                        if !parsed.lines.isEmpty {
+                            return parsed
+                        }
+                    } catch {
+                        lastError = error
+                        // Don't retry client errors (e.g. 404 or 401)
+                        if let nsErr = error as NSError?, nsErr.code == 404 || nsErr.code == 401 {
+                            break
+                        }
+                        if attempt < 2 {
+                            try? await Task.sleep(nanoseconds: 200_000_000)
+                        }
+                    }
                 }
-                if httpResponse.statusCode == 503 {
-                    throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 503, userInfo: [NSLocalizedDescriptionKey: "Upstream lyrics service temporarily unavailable."])
-                }
-                throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"])
-            }
 
-            let envelope = try JSONDecoder().decode(SpicyLyricsEnvelope.self, from: data)
-            guard let body = envelope.Body else {
-                throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: -2, userInfo: [NSLocalizedDescriptionKey: "Empty lyrics response"])
-            }
-
-            let parsed = self.parseLyricsBody(body)
-            return parsed
+            throw lastError ?? NSError(domain: "LiquidPlayer.SpicyLyrics", code: -1, userInfo: [NSLocalizedDescriptionKey: "Spicy Lyrics request failed."])
         }
 
         inFlightTasks[cleanId] = task
@@ -329,7 +665,149 @@ actor SpicyLyricsService {
         }
     }
 
-    private func parseLyricsBody(_ body: SpicyLyricsBody) -> ParsedLyrics {
+    // MARK: - Attribution & Metadata Extraction Helpers
+
+    private static func extractUser(from raw: Any?) -> SpicyAttributionUser? {
+        guard let raw = raw else { return nil }
+        if let str = raw as? String {
+            let clean = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            return clean.isEmpty ? nil : SpicyAttributionUser(id: nil, username: clean, avatar: nil, url: nil)
+        }
+        if let num = raw as? NSNumber {
+            let idStr = num.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return idStr.isEmpty ? nil : SpicyAttributionUser(id: idStr, username: idStr, avatar: nil, url: nil)
+        }
+        if let dict = raw as? [String: Any] {
+            let id: String? = {
+                if let s = dict["id"] as? String {
+                    let clean = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return clean.isEmpty ? nil : clean
+                }
+                if let n = dict["id"] as? NSNumber { return n.stringValue }
+                if let s = dict["userId"] as? String ?? dict["user_id"] as? String {
+                    let clean = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return clean.isEmpty ? nil : clean
+                }
+                if let n = dict["userId"] as? NSNumber ?? dict["user_id"] as? NSNumber { return n.stringValue }
+                return nil
+            }()
+            let username: String? = {
+                let candidates = ["username", "Username", "name", "Name", "displayName", "DisplayName", "user", "User"]
+                for key in candidates {
+                    if let s = dict[key] as? String {
+                        let clean = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !clean.isEmpty { return clean }
+                    }
+                }
+                return nil
+            }()
+            let avatar: String? = {
+                let candidates = ["avatar", "Avatar", "avatarUrl", "avatar_url", "AvatarUrl", "image", "Image"]
+                for key in candidates {
+                    if let s = dict[key] as? String {
+                        let clean = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !clean.isEmpty { return clean }
+                    }
+                }
+                return nil
+            }()
+            let url: String? = {
+                let candidates = ["url", "Url", "profile", "Profile", "profileUrl", "profile_url"]
+                for key in candidates {
+                    if let s = dict[key] as? String {
+                        let clean = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !clean.isEmpty { return clean }
+                    }
+                }
+                return nil
+            }()
+
+            let finalUsername = username ?? id
+            guard finalUsername != nil || id != nil else { return nil }
+            return SpicyAttributionUser(id: id, username: finalUsername, avatar: avatar, url: url)
+        }
+        return nil
+    }
+
+    private static func extractAttribution(from jsonDict: [String: Any]) -> SpicyUploadAttribution? {
+        let bodyDict = jsonDict["body"] as? [String: Any] ?? jsonDict["data"] as? [String: Any] ?? [:]
+
+        let attrContainers = [
+            jsonDict["uploadAttribution"] as? [String: Any],
+            jsonDict["attribution"] as? [String: Any],
+            jsonDict["credits"] as? [String: Any],
+            bodyDict["uploadAttribution"] as? [String: Any],
+            bodyDict["attribution"] as? [String: Any],
+            bodyDict["credits"] as? [String: Any]
+        ].compactMap { $0 }
+
+        var resolvedUploader: SpicyAttributionUser? = nil
+        var resolvedMaker: SpicyAttributionUser? = nil
+
+        for container in attrContainers {
+            if resolvedUploader == nil {
+                let uploaderRaw = container["uploader"] ?? container["Uploader"] ?? container["uploadUser"] ?? container["upload_user"] ?? container["contributor"] ?? container["author"]
+                resolvedUploader = extractUser(from: uploaderRaw)
+            }
+            if resolvedMaker == nil {
+                let makerRaw = container["maker"] ?? container["Maker"] ?? container["syncMaker"] ?? container["sync_maker"] ?? container["syncedBy"] ?? container["synced_by"] ?? container["editor"]
+                resolvedMaker = extractUser(from: makerRaw)
+            }
+        }
+
+        // Direct root or body user keys
+        if resolvedUploader == nil {
+            resolvedUploader = extractUser(from: jsonDict["uploader"] ?? jsonDict["Uploader"] ?? bodyDict["uploader"] ?? bodyDict["Uploader"])
+        }
+        if resolvedMaker == nil {
+            resolvedMaker = extractUser(from: jsonDict["maker"] ?? jsonDict["Maker"] ?? bodyDict["maker"] ?? bodyDict["Maker"])
+        }
+
+        if resolvedUploader != nil || resolvedMaker != nil {
+            return SpicyUploadAttribution(uploader: resolvedUploader, maker: resolvedMaker)
+        }
+        return nil
+    }
+
+    private static func extractSongwriters(from jsonDict: [String: Any]) -> [String] {
+        let bodyDict = jsonDict["body"] as? [String: Any] ?? jsonDict["data"] as? [String: Any] ?? [:]
+        let candidates = [
+            jsonDict["songWriters"] as? [String],
+            jsonDict["songwriters"] as? [String],
+            jsonDict["SongWriters"] as? [String],
+            bodyDict["songWriters"] as? [String],
+            bodyDict["songwriters"] as? [String],
+            bodyDict["SongWriters"] as? [String]
+        ]
+        for c in candidates {
+            if let writers = c, !writers.isEmpty {
+                return writers
+            }
+        }
+        return []
+    }
+
+    private func resolveAttribution(from uploadAttr: SpicyUploadAttributionDTO?) -> SpicyUploadAttribution? {
+        guard let uploadAttr = uploadAttr else { return nil }
+        let uploader = uploadAttr.Uploader.flatMap { dto -> SpicyAttributionUser? in
+            let uname = dto.username?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let uid = dto.id?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (uname != nil && !uname!.isEmpty) || (uid != nil && !uid!.isEmpty) else { return nil }
+            return SpicyAttributionUser(id: uid, username: (uname != nil && !uname!.isEmpty) ? uname : uid, avatar: dto.avatar, url: dto.url)
+        }
+        let maker = uploadAttr.Maker.flatMap { dto -> SpicyAttributionUser? in
+            let uname = dto.username?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let uid = dto.id?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (uname != nil && !uname!.isEmpty) || (uid != nil && !uid!.isEmpty) else { return nil }
+            return SpicyAttributionUser(id: uid, username: (uname != nil && !uname!.isEmpty) ? uname : uid, avatar: dto.avatar, url: dto.url)
+        }
+        if uploader != nil || maker != nil {
+            return SpicyUploadAttribution(uploader: uploader, maker: maker)
+        }
+        return nil
+    }
+
+    private func parseLyricsBody(_ body: SpicyLyricsBody, overrideAttribution: SpicyUploadAttribution? = nil) -> ParsedLyrics {
         let songwriters = body.SongWriters ?? []
         var vocalUnits: [VocalUnit] = []
 
@@ -535,7 +1013,6 @@ actor SpicyLyricsService {
                                 let rawToken = syl.Text
                                 let trimmedToken = rawToken.trimmingCharacters(in: .whitespaces)
                                 guard !trimmedToken.isEmpty else { continue }
-                                let hasLeadingSpace = rawToken.hasPrefix(" ") || rawToken.hasPrefix("\t")
                                 let hasTrailingSpace = rawToken.hasSuffix(" ") || rawToken.hasSuffix("\t")
                                 let endsWithHyphen = trimmedToken.hasSuffix("-") || trimmedToken.hasSuffix("–") || trimmedToken.hasSuffix("—")
                                 let isLastSyllable = sylIndex == bgSyllables.count - 1
@@ -733,21 +1210,44 @@ actor SpicyLyricsService {
             }
         }
 
-        var attribution: SpicyUploadAttribution? = nil
-        if let uploadAttr = body.UploadAttribution {
-            let uploader = uploadAttr.Uploader.map {
-                SpicyAttributionUser(id: $0.id, username: $0.username, avatar: $0.avatar, url: $0.url)
+        var attribution: SpicyUploadAttribution? = overrideAttribution
+        if attribution == nil, let uploadAttr = body.UploadAttribution {
+            let uploader = uploadAttr.Uploader.flatMap { dto -> SpicyAttributionUser? in
+                let uname = dto.username?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let uid = dto.id?.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard (uname != nil && !uname!.isEmpty) || (uid != nil && !uid!.isEmpty) else { return nil }
+                return SpicyAttributionUser(id: uid, username: (uname != nil && !uname!.isEmpty) ? uname : uid, avatar: dto.avatar, url: dto.url)
             }
-            let maker = uploadAttr.Maker.map {
-                SpicyAttributionUser(id: $0.id, username: $0.username, avatar: $0.avatar, url: $0.url)
+            let maker = uploadAttr.Maker.flatMap { dto -> SpicyAttributionUser? in
+                let uname = dto.username?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let uid = dto.id?.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard (uname != nil && !uname!.isEmpty) || (uid != nil && !uid!.isEmpty) else { return nil }
+                return SpicyAttributionUser(id: uid, username: (uname != nil && !uname!.isEmpty) ? uname : uid, avatar: dto.avatar, url: dto.url)
             }
-            attribution = SpicyUploadAttribution(uploader: uploader, maker: maker)
+            if uploader != nil || maker != nil {
+                attribution = SpicyUploadAttribution(uploader: uploader, maker: maker)
+            }
+        }
+
+        let resolvedSource: String
+        if let rawSource = body.source?.trimmingCharacters(in: .whitespacesAndNewlines), !rawSource.isEmpty {
+            if rawSource.lowercased().contains("community") {
+                resolvedSource = "Spicy Lyrics Community"
+            } else if rawSource.lowercased().contains("spicy") {
+                resolvedSource = attribution != nil ? "Spicy Lyrics Community" : "Spicy Lyrics"
+            } else {
+                resolvedSource = "Spicy Lyrics (\(rawSource.replacingOccurrences(of: "_", with: " ").capitalized))"
+            }
+        } else if attribution != nil {
+            resolvedSource = "Spicy Lyrics Community"
+        } else {
+            resolvedSource = "Spicy Lyrics"
         }
 
         return ParsedLyrics(
             lines: sortedAll,
             songwriters: songwriters,
-            source: body.source,
+            source: resolvedSource,
             attribution: attribution,
             isStatic: isStatic
         )

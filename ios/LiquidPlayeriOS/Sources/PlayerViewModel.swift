@@ -546,8 +546,36 @@ final class PlayerViewModel: ObservableObject {
     @Published var lyricsSource: String? = nil
     @Published var lyricsAttribution: SpicyUploadAttribution? = nil
     @Published var lyricsSongwriters: [String] = []
+    @Published var isSpicyLyricsConnected: Bool = APIConfig.isSpicyLyricsConnected
     @Published var currentTrackId: String?
     @Published var favoriteTrackIDs: Set<String> = []
+
+    func saveSpicyLyricsApiKey(_ key: String) {
+        APIConfig.spicyLyricsApiKey = key
+        self.isSpicyLyricsConnected = APIConfig.isSpicyLyricsConnected
+        self.objectWillChange.send()
+        purgeNonSpicyCaches()
+        if !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            refetchLyricsFromSpicy()
+        }
+    }
+
+    /// Clears any non-Spicy (e.g. LRCLIB/Bini) memory cache and disk TTML so tracks reload from Spicy Lyrics
+    func purgeNonSpicyCaches() {
+        let nonSpicyKeys = lyricsCache.compactMap { key, value -> String? in
+            let isSpicy = (value.attribution != nil) || (value.source?.lowercased().contains("spicy") == true)
+            return isSpicy ? nil : key
+        }
+        for key in nonSpicyKeys {
+            lyricsCache.removeValue(forKey: key)
+        }
+    }
+
+    func disconnectSpicyLyrics() {
+        APIConfig.spicyLyricsApiKey = ""
+        self.isSpicyLyricsConnected = false
+        self.objectWillChange.send()
+    }
 
     var displayTrackTitle: String {
         let title = nowPlayingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -634,7 +662,7 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
-    @Published var isExactColorEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isExactColorEnabled") as? Bool ?? false {
+    @Published var isExactColorEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isExactColorEnabled") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(isExactColorEnabled, forKey: "LiquidPlayeriOS.isExactColorEnabled")
         }
@@ -684,8 +712,8 @@ final class PlayerViewModel: ObservableObject {
         return lum > 0.55
     }
 
+    #if canImport(UIKit)
     func updateArtworkColors(from image: UIImage?) {
-        #if canImport(UIKit)
         guard let image = image else {
             self.artworkColorDarkHex = "#38BDF8"
             self.artworkColorLightHex = "#0284C7"
@@ -700,10 +728,10 @@ final class PlayerViewModel: ObservableObject {
                 self.artworkPaletteHexes = colors.paletteHexes
             }
         }
-        #endif
     }
+    #endif
 
-    @Published var isMultiVoiceColorsEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isMultiVoiceColorsEnabled") as? Bool ?? true {
+    @Published var isMultiVoiceColorsEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isMultiVoiceColorsEnabled") as? Bool ?? false {
         didSet {
             UserDefaults.standard.set(isMultiVoiceColorsEnabled, forKey: "LiquidPlayeriOS.isMultiVoiceColorsEnabled")
         }
@@ -924,7 +952,9 @@ final class PlayerViewModel: ObservableObject {
                     self.nowPlayingTitle = ""
                     self.nowPlayingArtist = ""
                     self.authorMetadata = ""
+                    #if canImport(UIKit)
                     self.artwork = nil
+                    #endif
                     self.motionArtworkURL = nil
                     self.motionArtworkTallURL = nil
                     self.lines = []
@@ -978,9 +1008,18 @@ final class PlayerViewModel: ObservableObject {
                 }
 
                 if !self.isPlaying {
-                    self.lastSyncProgressMs = progress
-                    self.lastSyncTime = now
-                    self.currentTimeMs = progress
+                    let diff = abs(progress - self.currentTimeMs)
+                    if diff > 3500 {
+                        // User performed an explicit seek in an external app while paused
+                        self.lastSyncProgressMs = progress
+                        self.lastSyncTime = now
+                        self.currentTimeMs = progress
+                    } else {
+                        // Instantly keep time frozen at the exact pause moment:
+                        // Ignore minor network polling fluctuations so lyrics do not move!
+                        self.lastSyncProgressMs = self.currentTimeMs
+                        self.lastSyncTime = now
+                    }
                     self.syncAudit.lastDriftMs = 0
                     self.syncAudit.isLocked = true
                     self.syncAudit.statusMessage = "Paused"
@@ -1050,7 +1089,7 @@ final class PlayerViewModel: ObservableObject {
         nowPlayingArtist = track.artistNames
         authorMetadata = track.artistNames
         durationMs = track.duration_ms ?? 0
-        currentTrackId = track.id
+        currentTrackId = track.id ?? track.uri?.replacingOccurrences(of: "spotify:track:", with: "")
 
         if !recentTracks.contains(where: { $0.id == track.id }) {
             recentTracks.insert(track, at: 0)
@@ -1103,29 +1142,37 @@ final class PlayerViewModel: ObservableObject {
             }
         }
 
-        if let trackId = track.id, trackId != currentLyricsTrackId {
-            currentLyricsTrackId = trackId
+        let targetId = track.id ?? track.uri?.replacingOccurrences(of: "spotify:track:", with: "")
+        if let rawTrackId = targetId {
+            let cleanId = rawTrackId.replacingOccurrences(of: "spotify:track:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanId.isEmpty, cleanId != currentLyricsTrackId else { return }
+            currentLyricsTrackId = cleanId
             hasPrefetchedForCurrentTrackEnding = false
 
-            // If lyrics were prefetched ahead of time, apply instantly with zero loading spinner!
-            if let cached = lyricsCache[trackId] {
-                self.lines = cached.lines
-                self.isLoadingLyrics = false
-                if cached.isStatic {
-                    self.lyricsStatus = formattedStaticLyricsStatus(source: cached.source)
-                } else {
-                    self.lyricsStatus = cached.lines.isEmpty ? "" : (cached.source ?? (cached.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics"))
+            // If lyrics were prefetched ahead of time from Spicy Lyrics, apply instantly with zero loading spinner!
+            if let cached = lyricsCache[cleanId] {
+                let isSpicySync = (cached.attribution != nil) || (cached.source?.lowercased().contains("spicy") == true)
+                if isSpicySync {
+                    self.lines = cached.lines
+                    self.isLoadingLyrics = false
+                    self.updateLyricsStatus(from: cached)
+                    self.lyricsSource = cached.source ?? "Spicy Lyrics"
+                    self.lyricsAttribution = cached.attribution
+                    self.lyricsSongwriters = cached.songwriters
+                    self.authorMetadata = nowPlayingArtist
+                    LibraryManager.shared.saveLyrics(for: cleanId, parsed: cached, track: track)
+
+                    // Immediately prefetch upcoming tracks while this track plays
+                    Task(priority: .background) {
+                        await self.prefetchUpcomingLyrics()
+                    }
+                    return
                 }
-                self.lyricsSource = cached.source
-                self.lyricsAttribution = cached.attribution
-                self.lyricsSongwriters = cached.songwriters
-                self.authorMetadata = nowPlayingArtist
-                LibraryManager.shared.saveLyrics(for: trackId, parsed: cached, track: track)
-            } else {
-                self.lines = []
-                Task {
-                    await fetchLyricsForTrack(trackId: trackId, trackTitle: track.name)
-                }
+            }
+
+            self.lines = []
+            Task {
+                await fetchLyricsForTrack(trackId: cleanId, trackTitle: track.name)
             }
 
             // Immediately prefetch upcoming tracks while this track plays
@@ -1144,6 +1191,24 @@ final class PlayerViewModel: ObservableObject {
         return "Lyrics provided by \(source ?? "provider")"
     }
 
+    private func updateLyricsStatus(from parsed: ParsedLyrics) {
+        if parsed.isStatic {
+            if let uploader = parsed.attribution?.uploader?.username, !uploader.isEmpty {
+                self.lyricsStatus = "Lyrics uploaded by \(uploader) (Spicy Lyrics)"
+            } else {
+                self.lyricsStatus = formattedStaticLyricsStatus(source: parsed.source ?? "Spicy Lyrics")
+            }
+        } else {
+            if let maker = parsed.attribution?.maker?.username, !maker.isEmpty {
+                self.lyricsStatus = "Synced by \(maker) (Spicy Lyrics)"
+            } else if let uploader = parsed.attribution?.uploader?.username, !uploader.isEmpty {
+                self.lyricsStatus = "Uploaded by \(uploader) (Spicy Lyrics)"
+            } else {
+                self.lyricsStatus = parsed.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics"
+            }
+        }
+    }
+
     private func extractTTMLTitle(from xml: String) -> String? {
         let pattern = #"<(?:\w+:)?title[^>]*>(.*?)</(?:\w+:)?title>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]),
@@ -1156,51 +1221,60 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func fetchLyricsForTrack(trackId: String, trackTitle: String) async {
-        // 1. If memory cache already has a Spicy Lyrics sync, return immediately
-        if let cached = lyricsCache[trackId] {
+        var cleanId = SpicyLyricsService.cleanTrackId(trackId)
+        if cleanId.count != 22, spotifyService.isAuthenticated, !trackTitle.isEmpty {
+            let query = "\(trackTitle) \(nowPlayingArtist)".trimmingCharacters(in: .whitespacesAndNewlines)
+            if let match = (await spotifyService.searchTracks(query: query)).first {
+                if let resolvedId = match.id ?? match.uri {
+                    let candidate = SpicyLyricsService.cleanTrackId(resolvedId)
+                    if candidate.count == 22 {
+                        cleanId = candidate
+                    }
+                }
+            }
+        }
+        guard !cleanId.isEmpty else { return }
+
+        // 1. If memory cache already has a verified Spicy Lyrics sync, return immediately
+        if let cached = lyricsCache[cleanId] {
             let isSpicySync = (cached.attribution != nil) || (cached.source?.lowercased().contains("spicy") == true)
             if isSpicySync {
                 self.lines = cached.lines
                 self.isLoadingLyrics = false
-                if cached.isStatic {
-                    self.lyricsStatus = formattedStaticLyricsStatus(source: cached.source)
-                } else {
-                    let makerName = cached.attribution?.maker?.username ?? cached.attribution?.uploader?.username
-                    self.lyricsStatus = makerName.map { "Synced by \($0) (Spicy Lyrics)" } ?? (cached.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics")
-                }
-                self.lyricsSource = cached.source
+                self.updateLyricsStatus(from: cached)
+                self.lyricsSource = cached.source ?? "Spicy Lyrics"
                 self.lyricsAttribution = cached.attribution
                 self.lyricsSongwriters = cached.songwriters
                 self.authorMetadata = nowPlayingArtist
-                LibraryManager.shared.saveLyrics(for: trackId, parsed: cached)
+                LibraryManager.shared.saveLyrics(for: cleanId, parsed: cached, track: spotifyService.currentTrack)
                 return
             }
         }
 
         // 2. Check if we have valid (under 30 days) saved TTML in the library
-        var fallbackNonSpicySaved: ParsedLyrics? = nil
-        if let validTTML = LibraryManager.shared.getValidSavedTTML(for: trackId),
+        var fallbackSaved: ParsedLyrics? = nil
+        if let validTTML = LibraryManager.shared.getValidSavedTTML(for: cleanId),
            let parsed = try? TTMLLyricsParser.parse(data: Data(validTTML.utf8)),
            !parsed.lines.isEmpty {
             // Validate that the saved TTML matches the requested track title (purging stale/mismatched caches)
             if let ttmlTitle = extractTTMLTitle(from: validTTML), !TrackMatchUtils.titlesMatch(requested: trackTitle, candidate: ttmlTitle) {
-                LibraryManager.shared.deleteSong(id: trackId)
+                LibraryManager.shared.deleteSong(id: cleanId)
             } else {
                 let isSpicySaved = (parsed.attribution != nil) || (parsed.source?.lowercased().contains("spicy") == true)
                 if isSpicySaved {
-                    self.lyricsCache[trackId] = parsed
+                    self.lyricsCache[cleanId] = parsed
                     self.lines = parsed.lines
                     self.isLoadingLyrics = false
-                    self.lyricsStatus = parsed.isStatic ? "Lyrics (Saved)" : (parsed.hasWordSyncedLyrics ? "Loaded from Saved TTML" : "Line Synced with Saved TTML")
+                    self.updateLyricsStatus(from: parsed)
                     self.lyricsSource = parsed.source ?? "Spicy Lyrics (Saved)"
                     self.lyricsAttribution = parsed.attribution
                     self.lyricsSongwriters = parsed.songwriters
                     self.authorMetadata = nowPlayingArtist
                     return
                 } else {
-                    // Non-Spicy saved TTML (e.g. from Apple Music or LRCLIB):
-                    // Hold as fallback so live Spicy Lyrics syncs are queried first and take priority!
-                    fallbackNonSpicySaved = parsed
+                    // Saved TTML without attribution (or non-Spicy):
+                    // Hold as fallback so live Spicy Lyrics syncs are queried first to fetch/repair sync credits!
+                    fallbackSaved = parsed
                 }
             }
         }
@@ -1211,35 +1285,32 @@ final class PlayerViewModel: ObservableObject {
 
         // 3. Primary Provider: Spicy Lyrics (ALWAYS prioritized above all other providers)
         do {
-            let parsed = try await SpicyLyricsService.shared.fetchLyrics(for: trackId)
+            let parsed = try await SpicyLyricsService.shared.fetchLyrics(for: cleanId)
             if !parsed.lines.isEmpty {
-                self.lyricsCache[trackId] = parsed
+                self.lyricsCache[cleanId] = parsed
                 self.lines = parsed.lines
                 self.isLoadingLyrics = false
-                if parsed.isStatic {
-                    self.lyricsStatus = formattedStaticLyricsStatus(source: parsed.source)
-                } else {
-                    let makerName = parsed.attribution?.maker?.username ?? parsed.attribution?.uploader?.username
-                    self.lyricsStatus = makerName.map { "Synced by \($0) (Spicy Lyrics)" } ?? (parsed.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics")
-                }
+                self.updateLyricsStatus(from: parsed)
                 self.lyricsSource = parsed.source ?? "Spicy Lyrics"
                 self.lyricsAttribution = parsed.attribution
                 self.lyricsSongwriters = parsed.songwriters
                 self.authorMetadata = nowPlayingArtist
-                LibraryManager.shared.saveLyrics(for: trackId, parsed: parsed)
+                LibraryManager.shared.saveLyrics(for: cleanId, parsed: parsed, track: spotifyService.currentTrack)
                 return
             }
         } catch {
-            // Spicy Lyrics request failed, attempt fallbacks below
+            #if DEBUG
+            print("[PlayerViewModel] Primary Spicy Lyrics request failed for \(cleanId): \(error.localizedDescription)")
+            #endif
         }
 
-        // 4. Use saved non-Spicy fallback if Spicy Lyrics had no lyrics
-        if let saved = fallbackNonSpicySaved {
-            self.lyricsCache[trackId] = saved
+        // 4. Use saved fallback if live Spicy Lyrics had no lyrics
+        if let saved = fallbackSaved {
+            self.lyricsCache[cleanId] = saved
             self.lines = saved.lines
             self.isLoadingLyrics = false
-            self.lyricsStatus = saved.isStatic ? "Lyrics (Saved)" : (saved.hasWordSyncedLyrics ? "Loaded from Saved TTML" : "Line Synced with Saved TTML")
-            self.lyricsSource = saved.source
+            self.updateLyricsStatus(from: saved)
+            self.lyricsSource = saved.source ?? "Saved Lyrics"
             self.lyricsAttribution = saved.attribution
             self.lyricsSongwriters = saved.songwriters
             self.authorMetadata = nowPlayingArtist
@@ -1256,7 +1327,7 @@ final class PlayerViewModel: ObservableObject {
             albumName: spotifyService.currentTrack?.album?.name,
             durationSeconds: durationSec
         ), !biniParsed.lines.isEmpty {
-            self.lyricsCache[trackId] = biniParsed
+            self.lyricsCache[cleanId] = biniParsed
             self.lines = biniParsed.lines
             self.isLoadingLyrics = false
             if biniParsed.isStatic {
@@ -1268,7 +1339,7 @@ final class PlayerViewModel: ObservableObject {
             self.lyricsAttribution = nil
             self.lyricsSongwriters = biniParsed.songwriters
             self.authorMetadata = nowPlayingArtist
-            LibraryManager.shared.saveLyrics(for: trackId, parsed: biniParsed)
+            LibraryManager.shared.saveLyrics(for: cleanId, parsed: biniParsed)
             return
         }
 
@@ -1279,7 +1350,7 @@ final class PlayerViewModel: ObservableObject {
             albumName: spotifyService.currentTrack?.album?.name,
             durationSeconds: durationSec
         ), !lrclibParsed.lines.isEmpty {
-            self.lyricsCache[trackId] = lrclibParsed
+            self.lyricsCache[cleanId] = lrclibParsed
             self.lines = lrclibParsed.lines
             self.isLoadingLyrics = false
             if lrclibParsed.isStatic {
@@ -1291,7 +1362,7 @@ final class PlayerViewModel: ObservableObject {
             self.lyricsAttribution = lrclibParsed.attribution
             self.lyricsSongwriters = lrclibParsed.songwriters
             self.authorMetadata = nowPlayingArtist
-            LibraryManager.shared.saveLyrics(for: trackId, parsed: lrclibParsed)
+            LibraryManager.shared.saveLyrics(for: cleanId, parsed: lrclibParsed)
             return
         }
 
@@ -1302,7 +1373,7 @@ final class PlayerViewModel: ObservableObject {
         self.lyricsAttribution = nil
         self.lyricsSongwriters = []
         self.authorMetadata = nowPlayingArtist
-        LibraryManager.shared.markNoLyrics(for: trackId)
+        LibraryManager.shared.markNoLyrics(for: cleanId)
     }
 
     func playLibrarySong(_ song: LibrarySong) {
@@ -1334,16 +1405,80 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func deleteSavedTTML(for trackId: String) {
-        let cleanId = trackId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanId = trackId.replacingOccurrences(of: "spotify:track:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanId.isEmpty else { return }
         LibraryManager.shared.deleteTTML(for: cleanId)
         lyricsCache.removeValue(forKey: cleanId)
+        Task {
+            await SpicyLyricsService.shared.clearCache(for: cleanId)
+        }
         if currentTrackId == cleanId {
             lines = []
             lyricsStatus = "Saved TTML deleted"
             lyricsSource = nil
             lyricsAttribution = nil
             lyricsSongwriters = []
+        }
+    }
+
+    /// Forces a fresh request directly to Spicy Lyrics, clearing any non-Spicy cached fallbacks
+    func refetchLyricsFromSpicy() {
+        Task { @MainActor in
+            var cleanId: String? = self.currentTrackId?.replacingOccurrences(of: "spotify:track:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanId == nil || cleanId?.isEmpty == true {
+                cleanId = self.spotifyService.currentTrack?.id
+                    ?? self.spotifyService.currentTrack?.uri?.replacingOccurrences(of: "spotify:track:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    ?? self.currentLyricsTrackId
+            }
+
+            // If still missing, but Spotify is authenticated and track is playing, search by title & artist
+            if (cleanId == nil || cleanId?.isEmpty == true), self.spotifyService.isAuthenticated, !self.nowPlayingTitle.isEmpty {
+                let query = "\(self.nowPlayingTitle) \(self.nowPlayingArtist)".trimmingCharacters(in: .whitespacesAndNewlines)
+                let results = await self.spotifyService.searchTracks(query: query)
+                if let match = results.first {
+                    cleanId = match.id ?? match.uri?.replacingOccurrences(of: "spotify:track:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+
+            guard let trackId = cleanId, !trackId.isEmpty else {
+                return
+            }
+
+            self.currentTrackId = trackId
+            self.currentLyricsTrackId = nil
+            self.lyricsCache.removeValue(forKey: trackId)
+            LibraryManager.shared.deleteTTML(for: trackId)
+            await SpicyLyricsService.shared.clearCache(for: trackId)
+
+            self.isLoadingLyrics = true
+            self.lyricsStatus = "Updating to Spicy Lyrics..."
+            self.objectWillChange.send()
+
+            do {
+                let parsed = try await SpicyLyricsService.shared.fetchLyrics(for: trackId)
+                if !parsed.lines.isEmpty {
+                    self.lyricsCache[trackId] = parsed
+                    self.lines = parsed.lines
+                    self.isLoadingLyrics = false
+                    self.updateLyricsStatus(from: parsed)
+                    self.lyricsSource = parsed.source ?? "Spicy Lyrics"
+                    self.lyricsAttribution = parsed.attribution
+                    self.lyricsSongwriters = parsed.songwriters
+                    self.authorMetadata = self.nowPlayingArtist
+                    self.currentLyricsTrackId = trackId
+                    LibraryManager.shared.saveLyrics(for: trackId, parsed: parsed, track: self.spotifyService.currentTrack)
+                    self.objectWillChange.send()
+                    return
+                }
+            } catch {
+                #if DEBUG
+                print("[PlayerViewModel] Manual Spicy Lyrics fetch failed: \(error)")
+                #endif
+            }
+
+            self.isLoadingLyrics = false
+            await self.fetchLyricsForTrack(trackId: trackId, trackTitle: self.nowPlayingTitle)
+            self.objectWillChange.send()
         }
     }
 
@@ -1360,6 +1495,8 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func handleInterpolationTick() {
+        guard isPlaying else { return }
+
         let now = Date()
 
         #if os(iOS) && !targetEnvironment(macCatalyst)
@@ -1368,8 +1505,6 @@ final class PlayerViewModel: ObservableObject {
             syncWithSystemMusicActivityIfMatching(now: now)
         }
         #endif
-
-        guard isPlaying else { return }
 
         // Periodic auto-sync checker: audit sync health against Spotify every 3.5s
         if isAutoSyncCheckerEnabled && now.timeIntervalSince(lastAutoSyncCheckTime) >= 3.5 {
@@ -1516,6 +1651,19 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func play() {
+        isPlaying = true
+        lastSyncTime = Date()
+        lastSyncProgressMs = currentTimeMs
+        seekLockoutUntil = .distantPast
+
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        if !spotifyService.isAuthenticated,
+           let item = MPMusicPlayerController.systemMusicPlayer.nowPlayingItem,
+           doesSystemMusicItemMatch(item: item) {
+            MPMusicPlayerController.systemMusicPlayer.play()
+        }
+        #endif
+
         Task {
             await spotifyService.play()
         }
@@ -1524,6 +1672,16 @@ final class PlayerViewModel: ObservableObject {
     func pause() {
         isPlaying = false
         lastSyncProgressMs = currentTimeMs
+        lastSyncTime = Date()
+        seekLockoutUntil = Date().addingTimeInterval(2.0)
+        spotifyService.isPlaying = false
+
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        if MPMusicPlayerController.systemMusicPlayer.playbackState == .playing {
+            MPMusicPlayerController.systemMusicPlayer.pause()
+        }
+        #endif
+
         Task {
             await spotifyService.pause()
         }
@@ -1809,9 +1967,11 @@ final class PlayerViewModel: ObservableObject {
 
     // MARK: - Remote Commands
     private func setupNowPlayingRemoteCommands() {
+        #if os(iOS)
         // Use mixWithOthers and do not activate exclusive audio session,
         // ensuring opening the app never interrupts or pauses background music (Spotify, Apple Music, etc.)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        #endif
 
         let commandCenter = MPRemoteCommandCenter.shared()
         commandCenter.playCommand.isEnabled = true
@@ -1903,11 +2063,19 @@ final class PlayerViewModel: ObservableObject {
         }
 
         // Prefetch lyrics for top 3 upcoming tracks in background
-        for trackId in trackIdsToPrefetch.prefix(3) {
-            guard lyricsCache[trackId] == nil else { continue }
+        for rawId in trackIdsToPrefetch.prefix(3) {
+            let clean = SpicyLyricsService.cleanTrackId(rawId)
+            guard !clean.isEmpty else { continue }
+            if let cached = lyricsCache[clean] {
+                let isSpicy = (cached.attribution != nil) || (cached.source?.lowercased().contains("spicy") == true)
+                if isSpicy { continue }
+            }
             do {
-                let parsed = try await SpicyLyricsService.shared.fetchLyrics(for: trackId)
-                self.lyricsCache[trackId] = parsed
+                let parsed = try await SpicyLyricsService.shared.fetchLyrics(for: clean)
+                if !parsed.lines.isEmpty {
+                    self.lyricsCache[clean] = parsed
+                    LibraryManager.shared.saveLyrics(for: clean, parsed: parsed)
+                }
             } catch {
                 // Silently ignore prefetch errors
             }
@@ -2004,7 +2172,7 @@ final class LibraryManager: ObservableObject {
     }
 
     func recordSongPlayed(from track: SpotifyTrackItem) {
-        guard let id = track.id else { return }
+        guard let id = track.id ?? track.uri?.replacingOccurrences(of: "spotify:track:", with: "") else { return }
         recordSongPlayed(
             trackId: id,
             title: track.name,

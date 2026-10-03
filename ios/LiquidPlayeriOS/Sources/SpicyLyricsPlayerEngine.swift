@@ -231,7 +231,7 @@ struct SpicySyllableTokenView: View {
     var isGlowEnabled: Bool = true
     var isBounceEnabled: Bool = true
     var activeColor: Color = .white
-    var isExactColorEnabled: Bool = false
+    var isExactColorEnabled: Bool = true
     var groupText: String? = nil
     var matchedColorWord: Color? = nil
     @Environment(\.colorScheme) private var colorScheme
@@ -427,7 +427,7 @@ struct SpicyWordGroupView: View {
     var isGlowEnabled: Bool = true
     var isBounceEnabled: Bool = true
     var activeColor: Color = .white
-    var isExactColorEnabled: Bool = false
+    var isExactColorEnabled: Bool = true
 
     var body: some View {
         let fullGroupWord = group.words.map(\.text).joined()
@@ -484,6 +484,7 @@ struct SpicyDotLineView: View {
     var isBounceEnabled: Bool = true
     var isGlowEnabled: Bool = true
     var activeColor: Color = .white
+    var isPlaying: Bool = true
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -583,7 +584,7 @@ struct SpicyDotLineView: View {
         .padding(.trailing, line.oppositeAligned ? 16 : 36)
         .scaleEffect(isVisible ? 1.0 : 0.85)
         .opacity(isVisible ? 1.0 : 0.0)
-        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isVisible)
+        .animation(isPlaying ? .spring(response: 0.38, dampingFraction: 0.82) : nil, value: isVisible)
     }
 }
 
@@ -697,8 +698,9 @@ struct SpicyLyricLineView: View, Equatable {
     let isGlowEnabled: Bool
     let isBounceEnabled: Bool
     let activeColor: Color
-    var isExactColorEnabled: Bool = false
+    var isExactColorEnabled: Bool = true
     var isSongUnsynced: Bool = false
+    var isPlaying: Bool = true
     let onSeek: (Int) -> Void
     @Environment(\.colorScheme) private var colorScheme
 
@@ -717,6 +719,7 @@ struct SpicyLyricLineView: View, Equatable {
         lhs.activeColor == rhs.activeColor &&
         lhs.isExactColorEnabled == rhs.isExactColorEnabled &&
         lhs.isSongUnsynced == rhs.isSongUnsynced &&
+        lhs.isPlaying == rhs.isPlaying &&
         (!((lhs.isLineActive || lhs.line.isInterlude)) || lhs.currentTimeMs == rhs.currentTimeMs)
     }
 
@@ -734,8 +737,9 @@ struct SpicyLyricLineView: View, Equatable {
         isGlowEnabled: Bool = true,
         isBounceEnabled: Bool = true,
         activeColor: Color = .white,
-        isExactColorEnabled: Bool = false,
+        isExactColorEnabled: Bool = true,
         isSongUnsynced: Bool = false,
+        isPlaying: Bool = true,
         onSeek: @escaping (Int) -> Void = { _ in }
     ) {
         self.line = line
@@ -753,6 +757,7 @@ struct SpicyLyricLineView: View, Equatable {
         self.activeColor = activeColor
         self.isExactColorEnabled = isExactColorEnabled
         self.isSongUnsynced = isSongUnsynced
+        self.isPlaying = isPlaying
         self.onSeek = onSeek
     }
 
@@ -766,7 +771,8 @@ struct SpicyLyricLineView: View, Equatable {
                     isLineActive: isCurrent,
                     isBounceEnabled: isBounceEnabled,
                     isGlowEnabled: isGlowEnabled,
-                    activeColor: activeColor
+                    activeColor: activeColor,
+                    isPlaying: isPlaying
                 )
                 .frame(height: isCurrent ? 72 : 0)
                 .opacity(isCurrent ? 1.0 : 0.0)
@@ -775,7 +781,7 @@ struct SpicyLyricLineView: View, Equatable {
                 .onTapGesture {
                     onSeek(max(0, line.startMs + 5))
                 }
-                .animation(.spring(response: 0.48, dampingFraction: 0.82), value: isCurrent)
+                .animation(isPlaying ? .spring(response: 0.48, dampingFraction: 0.82) : nil, value: isCurrent)
             } else {
                 VStack(alignment: line.oppositeAligned ? .trailing : .leading, spacing: 6) {
                     if line.isSongwriter {
@@ -860,7 +866,7 @@ struct SpicyLyricLineView: View, Equatable {
                 }
                 .opacity(lineOpacity)
                 .scaleEffect(isBounceEnabled ? (isLineActive ? 1.0 : 0.96) : 1.0, anchor: line.oppositeAligned ? .trailing : .leading)
-                .animation(.spring(response: 0.48, dampingFraction: 1.0), value: isLineActive)
+                .animation(isPlaying ? .spring(response: 0.48, dampingFraction: 1.0) : nil, value: isLineActive)
                 .modifier(OptionalBlurModifier(radius: lineBlur))
                 .padding(.top, line.isBackground ? -4 : (isMacPlatform ? 14 : 10))
                 .padding(.bottom, line.isBackground ? 10 : (isMacPlatform ? 16 : 12))
@@ -970,6 +976,7 @@ struct SpicyLyricsAttributionFooterView: View {
     let source: String?
     let attribution: SpicyUploadAttribution?
     let songwriters: [String]
+    var onManageConnection: (() -> Void)? = nil
 
     @Environment(\.openURL) private var openURL
     @Environment(\.colorScheme) private var colorScheme
@@ -1000,16 +1007,21 @@ struct SpicyLyricsAttributionFooterView: View {
             if let attr = attribution, (attr.maker != nil || attr.uploader != nil) {
                 let maker = attr.maker
                 let uploader = attr.uploader
-                let isSamePerson = maker != nil && uploader != nil && (maker?.id == uploader?.id || maker?.username == uploader?.username)
+                let isSamePerson: Bool = {
+                    guard let m = maker, let u = uploader else { return false }
+                    if let mid = m.id, !mid.isEmpty, let uid = u.id, !uid.isEmpty, mid == uid { return true }
+                    if let mun = m.username, !mun.isEmpty, let uun = u.username, !uun.isEmpty, mun.caseInsensitiveCompare(uun) == .orderedSame { return true }
+                    return false
+                }()
 
                 VStack(spacing: 10) {
-                    Text("SPICY LYRICS SYNC")
+                    Text(maker != nil ? "SPICY LYRICS SYNC" : "SPICY LYRICS CREDITS")
                         .font(.system(size: isMacPlatform ? 13 : 11, weight: .bold, design: .rounded))
                         .foregroundStyle(baseColor.opacity(isLight ? 0.50 : 0.45))
                         .tracking(1.2)
 
                     HStack(spacing: 12) {
-                        if isSamePerson, let user = maker {
+                        if isSamePerson, let user = maker ?? uploader {
                             userBadge(role: "Synced & Uploaded by", user: user, baseColor: baseColor, isLight: isLight)
                         } else {
                             if let maker = maker {
@@ -1040,22 +1052,88 @@ struct SpicyLyricsAttributionFooterView: View {
             }
 
             // Provider badge
-            HStack(spacing: 6) {
-                Image(systemName: "flame.fill")
-                    .font(.system(size: isMacPlatform ? 14 : 12))
-                    .foregroundStyle(Color.orange.opacity(0.9))
+            if isSpicyLyricsCommunity, let onManageConnection = onManageConnection {
+                Button {
+                    onManageConnection()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: isMacPlatform ? 14 : 12))
+                            .foregroundStyle(Color.orange.opacity(0.9))
 
+                        Text(providerLabel)
+                            .font(.system(size: isMacPlatform ? 14 : 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(baseColor.opacity(0.55))
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: isMacPlatform ? 11 : 9, weight: .semibold))
+                            .foregroundStyle(baseColor.opacity(0.40))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(baseColor.opacity(isLight ? 0.05 : 0.08))
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+            } else if isSpicyLyricsCommunity {
+                HStack(spacing: 6) {
+                    Image(systemName: "flame.fill")
+                        .font(.system(size: isMacPlatform ? 14 : 12))
+                        .foregroundStyle(Color.orange.opacity(0.9))
+
+                    Text(providerLabel)
+                        .font(.system(size: isMacPlatform ? 14 : 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(baseColor.opacity(0.55))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(baseColor.opacity(isLight ? 0.05 : 0.08))
+                )
+                .padding(.top, 2)
+            } else {
                 Text(providerLabel)
                     .font(.system(size: isMacPlatform ? 14 : 12, weight: .medium, design: .rounded))
                     .foregroundStyle(baseColor.opacity(0.55))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(baseColor.opacity(isLight ? 0.05 : 0.08))
+                    )
+                    .padding(.top, 2)
             }
-            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
     }
 
+    private var isSpicyLyricsCommunity: Bool {
+        if let src = source?.lowercased() {
+            if src.contains("lrclib") || src.contains("bini") {
+                return false
+            }
+            if src.contains("apple") || src.contains("spotify") {
+                return false
+            }
+            if src.contains("community") {
+                return true
+            }
+        }
+        if let attr = attribution, (attr.maker != nil || attr.uploader != nil) {
+            return true
+        }
+        return false
+    }
+
     private var providerLabel: String {
+        if isSpicyLyricsCommunity {
+            return "Lyrics provided by Spicy Lyrics Community"
+        }
         guard let src = source?.lowercased() else {
             return "Lyrics provided by Spicy Lyrics"
         }
@@ -1117,8 +1195,9 @@ struct SpicyLyricsAttributionFooterView: View {
                         .font(.system(size: isMacPlatform ? 12 : 10, weight: .semibold, design: .rounded))
                         .foregroundStyle(baseColor.opacity(0.5))
 
+                    let displayName = (user.username?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? user.username! : ((user.id?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? user.id! : "Contributor")
                     HStack(spacing: 3) {
-                        Text(user.username ?? "Unknown")
+                        Text(displayName)
                             .font(.system(size: isMacPlatform ? 15 : 13, weight: .bold, design: .rounded))
                             .foregroundStyle(baseColor)
 

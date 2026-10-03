@@ -16,20 +16,24 @@ enum APIConfig {
 
     static var spicyLyricsApiKey: String {
         get {
-            if let saved = UserDefaults.standard.string(forKey: spicyKeyKey), !saved.isEmpty {
-                return saved
+            if let saved = UserDefaults.standard.string(forKey: spicyKeyKey), !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return saved.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            if let envKey = ProcessInfo.processInfo.environment["SPICY_LYRICS_API_KEY"], !envKey.isEmpty {
-                return envKey
+            if let envKey = ProcessInfo.processInfo.environment["SPICY_LYRICS_API_KEY"], !envKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return envKey.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            if let plistKey = Bundle.main.object(forInfoDictionaryKey: "SpicyLyricsApiKey") as? String, !plistKey.isEmpty {
-                return plistKey
+            if let plistKey = Bundle.main.object(forInfoDictionaryKey: "SpicyLyricsApiKey") as? String, !plistKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return plistKey.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             return defaultSpicyLyricsApiKey
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: spicyKeyKey)
+            UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: spicyKeyKey)
         }
+    }
+
+    static var isSpicyLyricsConnected: Bool {
+        !spicyLyricsApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     static var spotifyClientId: String {

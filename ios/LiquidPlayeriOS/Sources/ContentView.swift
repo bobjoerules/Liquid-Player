@@ -41,6 +41,7 @@ struct ContentView: View {
     @State private var librarySearchText = ""
     @State private var viewingTTMLSong: LibrarySong? = nil
     @State private var isShowingQueue = false
+    @State private var isShowingSpicyConnect = false
     @State private var isAppLoading: Bool = true
     @State private var logoScale: CGFloat = 0.85
     @State private var logoOpacity: Double = 0.0
@@ -58,6 +59,11 @@ struct ContentView: View {
                             viewModel.deleteSavedTTML(for: song.id)
                         }
                     )
+                }
+                .sheet(isPresented: $isShowingSpicyConnect) {
+                    SpicyLyricsConnectSheet(viewModel: viewModel)
+                        .presentationDetents([.fraction(0.85), .large])
+                        .presentationDragIndicator(.visible)
                 }
                 .background {
                     Button("") {
@@ -174,7 +180,7 @@ struct ContentView: View {
                 introductionView
             } else if isFullScreenNowPlaying {
                 fullScreenNowPlayingView
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .transition(.opacity)
                     .zIndex(50)
             } else {
                 TabView(selection: $selectedTab) {
@@ -199,6 +205,7 @@ struct ContentView: View {
                 .tint(colorScheme == .light ? .black : .white)
                 .toolbarBackground(.visible, for: .tabBar)
                 .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+                .transition(.opacity)
             }
         }
     }
@@ -283,37 +290,63 @@ struct ContentView: View {
                             .padding(.horizontal, 32)
                     }
 
-                    HStack(spacing: 14) {
-                        if !viewModel.spotifyService.isAuthenticated {
+                    VStack(spacing: 12) {
+                        HStack(spacing: 14) {
+                            if !viewModel.spotifyService.isAuthenticated {
+                                Button {
+                                    viewModel.spotifyService.login()
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "link")
+                                            .font(.system(size: isMac ? 17 : 15, weight: .bold))
+                                        Text("Connect Spotify")
+                                            .font(.system(size: isMac ? 17 : 15, weight: .bold))
+                                    }
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 12)
+                                    .background(Color(red: 0.11, green: 0.73, blue: 0.33), in: Capsule())
+                                    .foregroundStyle(.white)
+                                }
+                                .buttonStyle(.plain)
+                            }
+
                             Button {
-                                viewModel.spotifyService.login()
+                                openSpotifyApp()
                             } label: {
                                 HStack(spacing: 8) {
-                                    Image(systemName: "link")
-                                        .font(.system(size: isMac ? 17 : 15, weight: .bold))
-                                    Text("Connect Spotify")
-                                        .font(.system(size: isMac ? 17 : 15, weight: .bold))
+                                    SpotifyLogoShape(size: isMac ? 20 : 18, color: viewModel.spotifyService.isAuthenticated ? .white : .primary)
+                                    Text("Open Spotify")
+                                        .font(.system(size: isMac ? 17 : 15, weight: .semibold))
                                 }
                                 .padding(.horizontal, 20)
                                 .padding(.vertical, 12)
-                                .background(Color(red: 0.11, green: 0.73, blue: 0.33), in: Capsule())
-                                .foregroundStyle(.white)
+                                .background(viewModel.spotifyService.isAuthenticated ? Color(red: 0.11, green: 0.73, blue: 0.33) : (colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.12)), in: Capsule())
+                                .foregroundStyle(viewModel.spotifyService.isAuthenticated ? .white : .primary)
                             }
                             .buttonStyle(.plain)
                         }
 
                         Button {
-                            openSpotifyApp()
+                            isShowingSpicyConnect = true
                         } label: {
                             HStack(spacing: 8) {
-                                SpotifyLogoShape(size: isMac ? 20 : 18, color: viewModel.spotifyService.isAuthenticated ? .white : .primary)
-                                Text("Open Spotify")
-                                    .font(.system(size: isMac ? 17 : 15, weight: .semibold))
+                                Image(systemName: "flame.fill")
+                                    .font(.system(size: isMac ? 17 : 15, weight: .bold))
+                                Text(viewModel.isSpicyLyricsConnected ? "Spicy Lyrics API Active" : "Connect Spicy Lyrics")
+                                    .font(.system(size: isMac ? 17 : 15, weight: .bold))
                             }
                             .padding(.horizontal, 20)
                             .padding(.vertical, 12)
-                            .background(viewModel.spotifyService.isAuthenticated ? Color(red: 0.11, green: 0.73, blue: 0.33) : (colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.12)), in: Capsule())
-                            .foregroundStyle(viewModel.spotifyService.isAuthenticated ? .white : .primary)
+                            .background(
+                                LinearGradient(
+                                    colors: [Color(red: 1.0, green: 0.45, blue: 0.1), Color(red: 0.95, green: 0.22, blue: 0.12)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                in: Capsule()
+                            )
+                            .foregroundStyle(.white)
+                            .shadow(color: Color.orange.opacity(0.35), radius: 6, x: 0, y: 3)
                         }
                         .buttonStyle(.plain)
                     }
@@ -674,20 +707,35 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 trailing()
 
-                if title == "Now Playing", viewModel.selectedTrackID != nil {
+                if title == "Now Playing" {
                     Button {
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                            isFullScreenNowPlaying = true
-                        }
+                        isShowingSpicyConnect = true
                     } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: isMac ? 17 : 14, weight: isMac ? .bold : .semibold))
-                            .foregroundStyle(.primary)
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: isMac ? 16 : 14, weight: .semibold))
+                            .foregroundStyle(viewModel.isSpicyLyricsConnected ? Color.orange : .secondary)
                             .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
                             .modifier(MiniPlayerButtonBackgroundModifier())
                             .contentShape(Circle())
                     }
                     .buttonStyle(LiquidScaleButtonStyle())
+                    .help("Spicy Lyrics API Connection")
+
+                    if viewModel.selectedTrackID != nil {
+                        Button {
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                                isFullScreenNowPlaying = true
+                            }
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: isMac ? 17 : 14, weight: isMac ? .bold : .semibold))
+                                .foregroundStyle(.primary)
+                                .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
+                                .modifier(MiniPlayerButtonBackgroundModifier())
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(LiquidScaleButtonStyle())
+                    }
                 }
             }
         }
@@ -2181,6 +2229,7 @@ struct SettingsView: View {
     @State private var spotifyClientId: String = APIConfig.spotifyClientId
     @State private var spotifyClientSecret: String = APIConfig.spotifyClientSecret
     @State private var isSavedAlertPresented: Bool = false
+    @State private var isShowingSpicyConnectSheet: Bool = false
 
     var body: some View {
         Form {
@@ -2243,6 +2292,29 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                }
+            }
+
+            Section(
+                header: Text("Spicy Lyrics Connection"),
+                footer: Text("Connect your Spicy Lyrics Client Key for real-time syllable-level sync and contributor credits.")
+            ) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("API Status")
+                            .font(.system(size: isMac ? 17 : 15, weight: .semibold))
+                        Text(viewModel.isSpicyLyricsConnected ? "Connected" : "Not Connected")
+                            .font(.system(size: isMac ? 15 : 13))
+                            .foregroundStyle(viewModel.isSpicyLyricsConnected ? Color(red: 1.0, green: 0.5, blue: 0.1) : .secondary)
+                    }
+
+                    Spacer()
+
+                    Button(viewModel.isSpicyLyricsConnected ? "Manage" : "Connect") {
+                        isShowingSpicyConnectSheet = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color(red: 1.0, green: 0.45, blue: 0.1))
                 }
             }
 
@@ -2519,7 +2591,7 @@ struct SettingsView: View {
                 }
 
                 Button("Save Configuration") {
-                    APIConfig.spicyLyricsApiKey = spicyLyricsKey
+                    viewModel.saveSpicyLyricsApiKey(spicyLyricsKey)
                     APIConfig.spotifyClientId = spotifyClientId
                     APIConfig.spotifyClientSecret = spotifyClientSecret
                     isSavedAlertPresented = true
@@ -2528,6 +2600,7 @@ struct SettingsView: View {
                 .foregroundStyle(Color(red: 0.11, green: 0.85, blue: 0.45))
 
                 Button("Reset to Defaults") {
+                    viewModel.disconnectSpicyLyrics()
                     APIConfig.resetToDefaults()
                     spicyLyricsKey = APIConfig.spicyLyricsApiKey
                     spotifyClientId = APIConfig.spotifyClientId
@@ -2542,7 +2615,7 @@ struct SettingsView: View {
                 HStack {
                     Text("Version")
                     Spacer()
-                    Text("\((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.1.4") (Beta)")
+                    Text("\((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.1.5") (Beta)")
                         .foregroundStyle(.secondary)
                 }
                 HStack {
@@ -2556,6 +2629,11 @@ struct SettingsView: View {
         }
         .scrollContentBackground(.hidden)
         .background(Color.clear)
+        .sheet(isPresented: $isShowingSpicyConnectSheet) {
+            SpicyLyricsConnectSheet(viewModel: viewModel)
+                .presentationDetents([.fraction(0.85), .large])
+                .presentationDragIndicator(.visible)
+        }
         .alert("Settings Saved", isPresented: $isSavedAlertPresented) {
             Button("OK", role: .cancel) { }
         } message: {
@@ -3050,6 +3128,10 @@ struct TTMLViewerSheet: View {
     @State private var copied = false
     @State private var showingDeleteAlert = false
 
+    private var effectiveTTML: String? {
+        LibraryManager.shared.getValidSavedTTML(for: song.id) ?? song.ttmlContent
+    }
+
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 14) {
@@ -3082,7 +3164,6 @@ struct TTMLViewerSheet: View {
                     .overlay(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.12))
 
                 // TTML XML Content
-                let effectiveTTML = LibraryManager.shared.getValidSavedTTML(for: song.id) ?? song.ttmlContent
                 ScrollView {
                     Text(effectiveTTML ?? "No TTML saved for this song.")
                         .font(.system(size: isMacPlatform ? 14 : 12, design: .monospaced))
@@ -3109,7 +3190,6 @@ struct TTMLViewerSheet: View {
                     .foregroundStyle(.primary)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    let contentToCopy = LibraryManager.shared.getValidSavedTTML(for: song.id) ?? song.ttmlContent
                     HStack(spacing: 14) {
                         if onDelete != nil {
                             Button(role: .destructive) {
@@ -3122,7 +3202,7 @@ struct TTMLViewerSheet: View {
                             .help("Delete Saved TTML")
                         }
 
-                        if let content = contentToCopy, !content.isEmpty {
+                        if let content = effectiveTTML, !content.isEmpty {
                             Button {
                                 #if canImport(UIKit)
                                 UIPasteboard.general.string = content
@@ -3308,6 +3388,11 @@ private struct LyricsPanelView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isUserScrollingLyrics = false
     @State private var userScrollResumeTask: Task<Void, Never>? = nil
+    @State private var isShowingSpicyConnect = false
+
+    private var lyricLines: [LyricLine] {
+        viewModel.lines.filter { !$0.isSongwriter }
+    }
 
     private var displayedTimeMs: Int {
         return max(0, timeKeeper.currentTimeMs + viewModel.lyricOffsetMs)
@@ -3351,9 +3436,8 @@ private struct LyricsPanelView: View {
                 }
 
                 ScrollView(showsIndicators: false) {
-                    let lyricLines: [LyricLine] = viewModel.lines.filter { !$0.isSongwriter }
-                    let activeID: UUID? = viewModel.activeLineID(for: displayedTimeMs)
-                    let activeIndex: Int = lyricLines.firstIndex { $0.id == activeID } ?? -1
+                    let activeID = viewModel.activeLineID(for: displayedTimeMs)
+                    let activeIndex = lyricLines.firstIndex { $0.id == activeID } ?? -1
 
                     VStack(spacing: 0) {
                         if viewModel.isLoadingLyrics {
@@ -3381,7 +3465,10 @@ private struct LyricsPanelView: View {
                             SpicyLyricsAttributionFooterView(
                                 source: viewModel.lyricsSource,
                                 attribution: viewModel.lyricsAttribution,
-                                songwriters: viewModel.lyricsSongwriters
+                                songwriters: viewModel.lyricsSongwriters,
+                                onManageConnection: {
+                                    isShowingSpicyConnect = true
+                                }
                             )
                             .padding(.top, 36)
                             .padding(.bottom, 64)
@@ -3389,7 +3476,7 @@ private struct LyricsPanelView: View {
                     }
                     .padding(.top, isFullScreen ? 64 : 52)
                     .padding(.bottom, 36)
-                    .animation(.spring(response: 0.52, dampingFraction: 0.88), value: activeID)
+                    .animation(viewModel.isPlaying ? .spring(response: 0.52, dampingFraction: 0.88) : nil, value: activeID)
                 }
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 4)
@@ -3426,7 +3513,7 @@ private struct LyricsPanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
                 Group {
-                    if !isFullScreen {
+                    if !isFullScreen || isMac {
                         RoundedRectangle(cornerRadius: 30, style: .continuous)
                             .fill(colorScheme == .light ? Color.black.opacity(0.03) : Color.white.opacity(0.08))
                     }
@@ -3434,7 +3521,7 @@ private struct LyricsPanelView: View {
             )
             .overlay(
                 Group {
-                    if !isFullScreen {
+                    if !isFullScreen || isMac {
                         RoundedRectangle(cornerRadius: 30, style: .continuous)
                             .stroke(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.08), lineWidth: 1)
                     }
@@ -3472,7 +3559,7 @@ private struct LyricsPanelView: View {
                     return
                 }
 
-                if !isUserScrollingLyrics {
+                if !isUserScrollingLyrics && viewModel.isPlaying {
                     withAnimation(.spring(response: 0.52, dampingFraction: 0.88)) {
                         proxy.scrollTo(activeID, anchor: lyricsScrollAnchor(for: activeID))
                     }
@@ -3516,6 +3603,11 @@ private struct LyricsPanelView: View {
                     }
                 }
             }
+        }
+        .sheet(isPresented: $isShowingSpicyConnect) {
+            SpicyLyricsConnectSheet(viewModel: viewModel)
+                .presentationDetents([.fraction(0.85), .large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -3565,6 +3657,7 @@ private struct LyricsPanelView: View {
             activeColor: lineColor,
             isExactColorEnabled: viewModel.isExactColorEnabled,
             isSongUnsynced: viewModel.isCurrentSongUnsynced,
+            isPlaying: viewModel.isPlaying,
             onSeek: { seekMs in
                 userScrollResumeTask?.cancel()
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
@@ -3575,6 +3668,296 @@ private struct LyricsPanelView: View {
         )
         .equatable()
         .id(line.id)
+    }
+}
+
+// MARK: - Spicy Lyrics Connect Sheet
+struct SpicyLyricsConnectSheet: View {
+    @ObservedObject var viewModel: PlayerViewModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var keyInput: String = ""
+    @State private var isKeyVisible: Bool = false
+    @State private var showSuccessBadge: Bool = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 24) {
+                    heroHeader
+                    statusPill
+                    catalogGuideCard
+                    keyInputCard
+                    actionButtons
+                }
+                .padding(20)
+            }
+            .navigationTitle("Spicy Lyrics")
+            #if canImport(UIKit)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                keyInput = APIConfig.spicyLyricsApiKey
+            }
+        }
+    }
+
+    private var heroHeader: some View {
+        VStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.orange.opacity(0.25), Color(red: 0.95, green: 0.35, blue: 0.15).opacity(0.15)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 88, height: 88)
+                    .shadow(color: Color.orange.opacity(0.3), radius: 12, x: 0, y: 6)
+
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.orange, Color(red: 0.95, green: 0.35, blue: 0.15)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+            .padding(.top, 8)
+
+            Text("Spicy Lyrics API")
+                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .foregroundStyle(.primary)
+
+            Text("Connect your personal Client Key for rich syllable synchronization and contributor attribution.")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+        }
+    }
+
+    private var statusPill: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(viewModel.isSpicyLyricsConnected ? Color(red: 0.11, green: 0.85, blue: 0.45) : Color.orange)
+                .frame(width: 9, height: 9)
+
+            Text(viewModel.isSpicyLyricsConnected ? "Connected & Active" : "Not Connected")
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(viewModel.isSpicyLyricsConnected ? Color(red: 0.11, green: 0.85, blue: 0.45) : .orange)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(
+            Capsule()
+                .fill((viewModel.isSpicyLyricsConnected ? Color.green : Color.orange).opacity(0.12))
+        )
+    }
+
+    private var catalogGuideCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "key.fill")
+                    .foregroundStyle(Color.orange)
+                    .font(.system(size: 14, weight: .bold))
+                Text("How to get your free key:")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.primary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                guideStep(number: "1", text: "Open the Spicy Lyrics catalog page for Liquid Player.")
+                guideStep(number: "2", text: "Click \"Add to Library\" (completely free, 0 slots used).")
+                guideStep(number: "3", text: "Copy your personal Client Key and paste it below.")
+            }
+
+            if let catalogUrl = URL(string: APIConfig.spicyLyricsCatalogUrl) {
+                Link(destination: catalogUrl) {
+                    HStack {
+                        Image(systemName: "arrow.up.right.square.fill")
+                        Text("Open Catalog Page (developers.spicylyrics.org)")
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                    }
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.orange)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 14)
+                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(colorScheme == .light ? Color.black.opacity(0.04) : Color.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.10), lineWidth: 1)
+                )
+        )
+    }
+
+    private var keyInputCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Client Key")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                if isKeyVisible {
+                    TextField("sl_pk_...", text: $keyInput)
+                        .font(.system(size: 14, design: .monospaced))
+                        .autocorrectionDisabled(true)
+                } else {
+                    SecureField("sl_pk_...", text: $keyInput)
+                        .font(.system(size: 14, design: .monospaced))
+                        .autocorrectionDisabled(true)
+                }
+
+                if !keyInput.isEmpty {
+                    Button {
+                        keyInput = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button {
+                    isKeyVisible.toggle()
+                } label: {
+                    Image(systemName: isKeyVisible ? "eye.slash.fill" : "eye.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    pasteFromClipboard()
+                } label: {
+                    Text("Paste")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.orange.opacity(0.15)))
+                        .foregroundStyle(.orange)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(colorScheme == .light ? Color.white : Color.black.opacity(0.3))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
+                    )
+            )
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(colorScheme == .light ? Color.black.opacity(0.04) : Color.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.10), lineWidth: 1)
+                )
+        )
+    }
+
+    private var actionButtons: some View {
+        VStack(spacing: 12) {
+            Button {
+                let trimmed = keyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                viewModel.saveSpicyLyricsApiKey(trimmed)
+                withAnimation(.spring()) {
+                    showSuccessBadge = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    dismiss()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if showSuccessBadge {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 17, weight: .bold))
+                        Text("Saved & Connected!")
+                            .font(.system(size: 16, weight: .bold))
+                    } else {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 17, weight: .bold))
+                        Text(viewModel.isSpicyLyricsConnected ? "Save & Update Key" : "Connect Spicy Lyrics")
+                            .font(.system(size: 16, weight: .bold))
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 15)
+                .background(
+                    LinearGradient(
+                        colors: [Color(red: 1.0, green: 0.45, blue: 0.1), Color(red: 0.95, green: 0.22, blue: 0.12)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    in: Capsule()
+                )
+                .foregroundStyle(.white)
+                .shadow(color: Color.orange.opacity(0.35), radius: 8, x: 0, y: 4)
+            }
+            .buttonStyle(.plain)
+
+            if viewModel.isSpicyLyricsConnected {
+                Button("Disconnect & Remove Key", role: .destructive) {
+                    viewModel.disconnectSpicyLyrics()
+                    keyInput = ""
+                }
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.red)
+                .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+
+    private func guideStep(number: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(number)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Color.orange))
+
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func pasteFromClipboard() {
+        #if canImport(UIKit)
+        if let string = UIPasteboard.general.string {
+            keyInput = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        #elseif canImport(AppKit)
+        if let string = NSPasteboard.general.string(forType: .string) {
+            keyInput = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        #endif
     }
 }
 

@@ -256,19 +256,43 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
         case "source":
             inSource = true
         case "uploader":
-            uploader = SpicyAttributionUser(
-                id: attributeDict["id"],
-                username: attributeDict["username"],
-                avatar: attributeDict["avatar"],
-                url: attributeDict["url"]
-            )
+            let cleanUname = (attributeDict["username"] ?? attributeDict["name"] ?? attributeDict["displayName"] ?? attributeDict["user"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanUid = (attributeDict["id"] ?? attributeDict["xml:id"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanAvatar = (attributeDict["avatar"] ?? attributeDict["avatarUrl"] ?? attributeDict["avatar_url"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanUrl = (attributeDict["url"] ?? attributeDict["profile"] ?? attributeDict["profileUrl"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let finalUname = (cleanUname?.isEmpty == false) ? cleanUname : cleanUid
+            let finalUid = (cleanUid?.isEmpty == false) ? cleanUid : nil
+            let finalAvatar = (cleanAvatar?.isEmpty == false) ? cleanAvatar : nil
+            let finalUrl = (cleanUrl?.isEmpty == false) ? cleanUrl : nil
+
+            if finalUname != nil || finalUid != nil {
+                uploader = SpicyAttributionUser(
+                    id: finalUid,
+                    username: finalUname,
+                    avatar: finalAvatar,
+                    url: finalUrl
+                )
+            }
         case "maker":
-            maker = SpicyAttributionUser(
-                id: attributeDict["id"],
-                username: attributeDict["username"],
-                avatar: attributeDict["avatar"],
-                url: attributeDict["url"]
-            )
+            let cleanMname = (attributeDict["username"] ?? attributeDict["name"] ?? attributeDict["displayName"] ?? attributeDict["user"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanMid = (attributeDict["id"] ?? attributeDict["xml:id"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanAvatar = (attributeDict["avatar"] ?? attributeDict["avatarUrl"] ?? attributeDict["avatar_url"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanUrl = (attributeDict["url"] ?? attributeDict["profile"] ?? attributeDict["profileUrl"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let finalMname = (cleanMname?.isEmpty == false) ? cleanMname : cleanMid
+            let finalMid = (cleanMid?.isEmpty == false) ? cleanMid : nil
+            let finalAvatar = (cleanAvatar?.isEmpty == false) ? cleanAvatar : nil
+            let finalUrl = (cleanUrl?.isEmpty == false) ? cleanUrl : nil
+
+            if finalMname != nil || finalMid != nil {
+                maker = SpicyAttributionUser(
+                    id: finalMid,
+                    username: finalMname,
+                    avatar: finalAvatar,
+                    url: finalUrl
+                )
+            }
         case "agent":
             let identifier = attributeDict["xml:id"] ?? attributeDict["id"]
             if identifier == "v1" || identifier == "1" {
@@ -919,10 +943,10 @@ enum TTMLExporter {
             xml += "      <source>\(xmlEscape(source))</source>\n"
         }
         if let attr = attribution {
-            if let uploader = attr.uploader {
+            if let uploader = attr.uploader, (uploader.username?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false || uploader.id?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) {
                 xml += "      <uploader id=\"\(xmlEscape(uploader.id ?? ""))\" username=\"\(xmlEscape(uploader.username ?? ""))\" avatar=\"\(xmlEscape(uploader.avatar ?? ""))\" url=\"\(xmlEscape(uploader.url ?? ""))\" />\n"
             }
-            if let maker = attr.maker {
+            if let maker = attr.maker, (maker.username?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false || maker.id?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) {
                 xml += "      <maker id=\"\(xmlEscape(maker.id ?? ""))\" username=\"\(xmlEscape(maker.username ?? ""))\" avatar=\"\(xmlEscape(maker.avatar ?? ""))\" url=\"\(xmlEscape(maker.url ?? ""))\" />\n"
             }
         }

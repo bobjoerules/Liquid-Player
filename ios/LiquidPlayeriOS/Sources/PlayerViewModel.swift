@@ -994,19 +994,23 @@ final class PlayerViewModel: ObservableObject {
                     self.syncAudit.lastAuditTime = now
                     self.syncAudit.statusMessage = abs(diff) < 45 ? "In Sync" : "Syncing (±\(abs(diff))ms)"
 
-                    if abs(diff) > 1200 {
+                    if abs(diff) > 1500 {
                         // Large discrepancy (user seeked or track jumped): hard sync immediately
                         self.lastSyncProgressMs = progress
                         self.lastSyncTime = now
                         self.currentTimeMs = progress
-                    } else if abs(diff) > 35 {
-                        // Symmetric bidirectional proportional slew: gently realign both positive and negative drift
-                        let correction = Int(Double(diff) * 0.80)
+                    } else if abs(diff) > 40 {
+                        // Smooth proportional slew towards target:
+                        // If diff is negative (local clock slightly ahead), adjust reference progress
+                        // without snapping currentTimeMs backwards, guaranteeing forward monotonic progression.
+                        let correction = Int(Double(diff) * 0.70)
                         self.lastSyncProgressMs = currentInterpolated + correction
                         self.lastSyncTime = now
-                        self.currentTimeMs = self.lastSyncProgressMs
+                        if diff > 0 {
+                            self.currentTimeMs = self.lastSyncProgressMs
+                        }
                     } else {
-                        // Tightly locked within 35ms: lock to Spotify progress and re-anchor reference time
+                        // Tightly locked within 40ms: lock to Spotify progress and re-anchor reference time
                         self.lastSyncProgressMs = progress
                         self.lastSyncTime = now
                     }
@@ -1034,6 +1038,14 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func updateTrackInfo(_ track: SpotifyTrackItem) {
+        let isNewTrack = (currentTrackId != track.id)
+        if isNewTrack {
+            // Reset local playback position immediately when transitioning to a new song
+            // to prevent displaying or interpolating from the previous song's time.
+            currentTimeMs = 0
+            lastSyncProgressMs = 0
+            lastSyncTime = Date()
+        }
         nowPlayingTitle = track.name
         nowPlayingArtist = track.artistNames
         authorMetadata = track.artistNames
@@ -1406,6 +1418,11 @@ final class PlayerViewModel: ObservableObject {
     private func syncWithSystemMusicActivityIfMatching(now: Date = Date()) {
         guard now >= seekLockoutUntil else { return }
 
+        // If Spotify is currently connected and playing, let Spotify be the source of truth
+        if spotifyService.isAuthenticated && spotifyService.isPlaying {
+            return
+        }
+
         let player = MPMusicPlayerController.systemMusicPlayer
         guard let item = player.nowPlayingItem, doesSystemMusicItemMatch(item: item) else {
             return
@@ -1431,7 +1448,9 @@ final class PlayerViewModel: ObservableObject {
             let correction = Int(Double(diff) * 0.65)
             self.lastSyncProgressMs = self.currentTimeMs + correction
             self.lastSyncTime = now
-            self.currentTimeMs = max(self.currentTimeMs, self.lastSyncProgressMs)
+            if diff > 0 {
+                self.currentTimeMs = self.lastSyncProgressMs
+            }
         } else {
             self.lastSyncProgressMs = systemMs
             self.lastSyncTime = now
@@ -1515,6 +1534,10 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func nextTrack() {
+        currentTimeMs = 0
+        lastSyncProgressMs = 0
+        lastSyncTime = Date()
+        seekLockoutUntil = Date().addingTimeInterval(1.5)
         Task {
             await spotifyService.next()
         }
@@ -1525,6 +1548,10 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func previousTrack() {
+        currentTimeMs = 0
+        lastSyncProgressMs = 0
+        lastSyncTime = Date()
+        seekLockoutUntil = Date().addingTimeInterval(1.5)
         Task {
             await spotifyService.previous()
         }
@@ -1569,16 +1596,28 @@ final class PlayerViewModel: ObservableObject {
         let currentSpotify = spotifyService.progressMs
         let diff = currentSpotify - interpolated
 
-        if force || abs(diff) > 40 {
+        if force || abs(diff) > 1500 {
             lastSyncProgressMs = currentSpotify
             lastSyncTime = now
             currentTimeMs = currentSpotify
             syncAudit.lastDriftMs = 0
             syncAudit.isLocked = true
             syncAudit.statusMessage = "Resynced to \(timecode(currentSpotify))"
-        } else {
+        } else if abs(diff) > 40 {
+            let correction = Int(Double(diff) * 0.70)
+            lastSyncProgressMs = interpolated + correction
+            lastSyncTime = now
+            if diff > 0 {
+                currentTimeMs = lastSyncProgressMs
+            }
             syncAudit.lastDriftMs = diff
             syncAudit.isLocked = abs(diff) < 45
+            syncAudit.statusMessage = "In Sync (±\(abs(diff))ms)"
+        } else {
+            lastSyncProgressMs = currentSpotify
+            lastSyncTime = now
+            syncAudit.lastDriftMs = diff
+            syncAudit.isLocked = true
             syncAudit.statusMessage = "In Sync (±\(abs(diff))ms)"
         }
         syncAudit.lastAuditTime = now

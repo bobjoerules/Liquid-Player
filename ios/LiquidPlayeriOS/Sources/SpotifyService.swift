@@ -541,23 +541,11 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
             self.isPlaying = playing
             let reportedProgress = state.progress_ms ?? 0
 
-            // Compensate for elapsed time since Spotify server recorded progress
-            let adjustedProgress: Int
-            if playing, let serverTimestamp = state.timestamp, serverTimestamp > 0 {
-                let nowMs = Int64(Date().timeIntervalSince1970 * 1000.0)
-                let elapsedMs = Int(nowMs - serverTimestamp)
-                if elapsedMs >= 0 && elapsedMs < 3000 {
-                    adjustedProgress = reportedProgress + elapsedMs
-                } else {
-                    let latencyCompensationMs = Int(min(roundTripDuration / 2.0, 0.12) * 1000.0)
-                    adjustedProgress = reportedProgress + latencyCompensationMs
-                }
-            } else if playing {
-                let latencyCompensationMs = Int(min(roundTripDuration / 2.0, 0.12) * 1000.0)
-                adjustedProgress = reportedProgress + latencyCompensationMs
-            } else {
-                adjustedProgress = reportedProgress
-            }
+            // Compensate for one-way network latency using local request round-trip time.
+            // Avoid comparing local Date() directly to remote server timestamps (state.timestamp)
+            // as device clock skew causes spurious multi-second jumps and drop-offs.
+            let latencyCompensationMs = playing ? Int(min(max(0, roundTripDuration / 2.0), 0.25) * 1000.0) : 0
+            let adjustedProgress = reportedProgress + latencyCompensationMs
 
             if Date() < self.seekLockoutUntil {
                 if abs(adjustedProgress - self.expectedSeekMs) <= 1500 {
@@ -764,12 +752,14 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
 
     func next() async {
+        self.progressMs = 0
         _ = await sendPlayerCommand(endpoint: "next", method: "POST")
         try? await Task.sleep(nanoseconds: 300_000_000)
         await fetchPlaybackState()
     }
 
     func previous() async {
+        self.progressMs = 0
         _ = await sendPlayerCommand(endpoint: "previous", method: "POST")
         try? await Task.sleep(nanoseconds: 300_000_000)
         await fetchPlaybackState()

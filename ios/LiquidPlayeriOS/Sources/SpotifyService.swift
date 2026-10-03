@@ -9,6 +9,7 @@ struct SpotifyTrackItem: Codable, Identifiable, Hashable {
     let duration_ms: Int?
     let artists: [SpotifyArtistItem]?
     let album: SpotifyAlbumItem?
+    let external_ids: [String: String]?
 
     var itemID: String {
         id ?? uri ?? "\(name)_\(duration_ms ?? 0)"
@@ -22,6 +23,10 @@ struct SpotifyTrackItem: Codable, Identifiable, Hashable {
     var artworkURL: URL? {
         guard let urlString = album?.images?.first?.url else { return nil }
         return URL(string: urlString)
+    }
+
+    var isrc: String? {
+        external_ids?["isrc"]
     }
 
     func hash(into hasher: inout Hasher) {
@@ -64,6 +69,7 @@ struct SpotifyDeviceItem: Codable, Identifiable, Hashable {
 }
 
 struct SpotifyPlaybackState: Codable {
+    let timestamp: Int64?
     let is_playing: Bool?
     let progress_ms: Int?
     let item: SpotifyTrackItem?
@@ -534,9 +540,24 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
             let playing = state.is_playing ?? false
             self.isPlaying = playing
             let reportedProgress = state.progress_ms ?? 0
-            // Compensate for one-way network transit latency while playing (approx. half of RTT, clamped to 350ms)
-            let latencyCompensationMs = playing ? Int(min(roundTripDuration / 2.0, 0.35) * 1000.0) : 0
-            let adjustedProgress = reportedProgress + latencyCompensationMs
+
+            // Compensate for elapsed time since Spotify server recorded progress
+            let adjustedProgress: Int
+            if playing, let serverTimestamp = state.timestamp, serverTimestamp > 0 {
+                let nowMs = Int64(Date().timeIntervalSince1970 * 1000.0)
+                let elapsedMs = Int(nowMs - serverTimestamp)
+                if elapsedMs >= 0 && elapsedMs < 3000 {
+                    adjustedProgress = reportedProgress + elapsedMs
+                } else {
+                    let latencyCompensationMs = Int(min(roundTripDuration / 2.0, 0.12) * 1000.0)
+                    adjustedProgress = reportedProgress + latencyCompensationMs
+                }
+            } else if playing {
+                let latencyCompensationMs = Int(min(roundTripDuration / 2.0, 0.12) * 1000.0)
+                adjustedProgress = reportedProgress + latencyCompensationMs
+            } else {
+                adjustedProgress = reportedProgress
+            }
 
             if Date() < self.seekLockoutUntil {
                 if abs(adjustedProgress - self.expectedSeekMs) <= 1500 {

@@ -11,13 +11,7 @@ import AppKit
 #endif
 
 private var isMac: Bool {
-    #if targetEnvironment(macCatalyst)
-    return true
-    #elseif canImport(UIKit)
-    return UIDevice.current.userInterfaceIdiom == .mac || ProcessInfo.processInfo.isiOSAppOnMac
-    #else
-    return false
-    #endif
+    return isMacPlatform
 }
 
 struct ContentView: View {
@@ -41,23 +35,15 @@ struct ContentView: View {
     @AppStorage("hasCompletedIntro") private var hasCompletedIntro = false
     @State private var isFullScreenNowPlaying = false
     @State private var isFullScreenControlsHidden = false
-    @State private var isDraggingSlider = false
-    @State private var dragValue: Double = 0.0
     @State private var selectedTab: AppTab = .nowPlaying
     @State private var libraryFilter: LibraryFilter = .all
     @Namespace private var libraryFilterNamespace
     @State private var librarySearchText = ""
     @State private var viewingTTMLSong: LibrarySong? = nil
     @State private var isShowingQueue = false
-    @State private var isUserScrollingLyrics = false
-    @State private var userScrollResumeTask: Task<Void, Never>? = nil
     @State private var isAppLoading: Bool = true
     @State private var logoScale: CGFloat = 0.85
     @State private var logoOpacity: Double = 0.0
-
-    private var displayedTimeMs: Int {
-        return max(0, viewModel.currentTimeMs + viewModel.lyricOffsetMs)
-    }
 
     var body: some View {
         ZStack {
@@ -66,15 +52,20 @@ struct ContentView: View {
                     QueueView(viewModel: viewModel)
                 }
                 .sheet(item: $viewingTTMLSong) { song in
-                    TTMLViewerSheet(song: song)
+                    TTMLViewerSheet(
+                        song: song,
+                        onDelete: {
+                            viewModel.deleteSavedTTML(for: song.id)
+                        }
+                    )
                 }
                 .background {
                     Button("") {
                         viewModel.togglePlayback()
                     }
                     .keyboardShortcut(.space, modifiers: [])
-                    .opacity(0)
-                    .allowsHitTesting(false)
+                    .opacity(0.001)
+                    .frame(width: 1, height: 1)
                 }
                 .onChange(of: isFullScreenNowPlaying) { _, isFS in
                     if !isFS {
@@ -167,8 +158,14 @@ struct ContentView: View {
     private var mainContent: some View {
         ZStack {
             #if canImport(UIKit)
-            PlayerBackgroundView(style: viewModel.backgroundStyle, artwork: viewModel.artwork)
-                .animation(.easeInOut(duration: 0.35), value: viewModel.backgroundStyle)
+            PlayerBackgroundView(
+                style: viewModel.backgroundStyle,
+                artwork: viewModel.artwork,
+                motionURL: viewModel.isMotionArtworkEnabled ? (viewModel.motionArtworkTallURL ?? viewModel.motionArtworkURL) : nil,
+                paletteHexes: viewModel.artworkPaletteHexes
+            )
+            .ignoresSafeArea()
+            .animation(.easeInOut(duration: 0.35), value: viewModel.backgroundStyle)
             #else
             (colorScheme == .light ? Color.white : Color.black).ignoresSafeArea()
             #endif
@@ -177,6 +174,8 @@ struct ContentView: View {
                 introductionView
             } else if isFullScreenNowPlaying {
                 fullScreenNowPlayingView
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .zIndex(50)
             } else {
                 TabView(selection: $selectedTab) {
                     nowPlayingPage
@@ -243,12 +242,16 @@ struct ContentView: View {
                     controls
                 }
             } else if viewModel.selectedTrackID != nil {
-                heroPanel
-                timelineSeekBar
-                lyricsPanel()
-                controls
+                if isMac {
+                    macSideBySideNowPlayingView(isFullScreen: false)
+                } else {
+                    heroPanel
+                    timelineSeekBar
+                    lyricsPanel()
+                    controls
 
-                Spacer(minLength: 0)
+                    Spacer(minLength: 0)
+                }
             } else {
                 // Empty state when nothing is playing
                 Spacer()
@@ -270,11 +273,11 @@ struct ContentView: View {
 
                     VStack(spacing: 8) {
                         Text(viewModel.spotifyService.isAuthenticated ? "Connected to Spotify" : "No Spotify Track Active")
-                            .font(.system(size: 24, weight: .bold))
+                            .font(.system(size: isMac ? 28 : 24, weight: .bold))
                             .foregroundStyle(.primary)
 
                         Text(viewModel.spotifyService.isAuthenticated ? "Play any song on Spotify to start live syllable synchronization, or pick a track from your Library." : "Play a track on Spotify or connect your account to start live syllable synchronization.")
-                            .font(.system(size: 15, weight: .regular))
+                            .font(.system(size: isMac ? 17 : 15, weight: .regular))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 32)
@@ -287,9 +290,9 @@ struct ContentView: View {
                             } label: {
                                 HStack(spacing: 8) {
                                     Image(systemName: "link")
-                                        .font(.system(size: 15, weight: .bold))
+                                        .font(.system(size: isMac ? 17 : 15, weight: .bold))
                                     Text("Connect Spotify")
-                                        .font(.system(size: 15, weight: .bold))
+                                        .font(.system(size: isMac ? 17 : 15, weight: .bold))
                                 }
                                 .padding(.horizontal, 20)
                                 .padding(.vertical, 12)
@@ -303,9 +306,9 @@ struct ContentView: View {
                             openSpotifyApp()
                         } label: {
                             HStack(spacing: 8) {
-                                SpotifyLogoShape(size: 18, color: viewModel.spotifyService.isAuthenticated ? .white : .primary)
+                                SpotifyLogoShape(size: isMac ? 20 : 18, color: viewModel.spotifyService.isAuthenticated ? .white : .primary)
                                 Text("Open Spotify")
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .font(.system(size: isMac ? 17 : 15, weight: .semibold))
                             }
                             .padding(.horizontal, 20)
                             .padding(.vertical, 12)
@@ -364,10 +367,10 @@ struct ContentView: View {
 
                         VStack(alignment: .leading, spacing: 1) {
                             Text("\(libraryManager.songsNeedingTTMLUpdate.count) songs have outdated lyrics")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.system(size: isMac ? 15 : 13, weight: .semibold))
                                 .foregroundStyle(Color.primary)
                             Text("Saved over 30 days ago")
-                                .font(.system(size: 11))
+                                .font(.system(size: isMac ? 13 : 11))
                                 .foregroundStyle(Color.secondary)
                         }
 
@@ -384,7 +387,7 @@ struct ContentView: View {
                                     .tint(Color.primary)
                             } else {
                                 Text("Update")
-                                    .font(.system(size: 12, weight: .bold))
+                                    .font(.system(size: isMac ? 14 : 12, weight: .bold))
                                     .foregroundStyle(.orange)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 5)
@@ -429,10 +432,10 @@ struct ContentView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(Color.secondary)
-                        .font(.system(size: 14))
+                        .font(.system(size: isMac ? 16 : 14))
 
                     TextField("Search library", text: $librarySearchText)
-                        .font(.system(size: 14))
+                        .font(.system(size: isMac ? 16 : 14))
                         .foregroundStyle(Color.primary)
                         .autocorrectionDisabled()
 
@@ -473,6 +476,9 @@ struct ContentView: View {
                                     },
                                     onViewTTML: {
                                         viewingTTMLSong = song
+                                    },
+                                    onDeleteTTML: {
+                                        viewModel.deleteSavedTTML(for: song.id)
                                     }
                                 )
 
@@ -539,13 +545,13 @@ struct ContentView: View {
         } label: {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .font(.system(size: isMac ? 15 : 13, weight: isSelected ? .semibold : .medium))
                     .foregroundStyle(isSelected ? .primary : .secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
 
                 Text("\(count)")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: isMac ? 13 : 11, weight: .bold))
                     .foregroundStyle(countTextColor)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -559,7 +565,7 @@ struct ContentView: View {
                     )
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 42)
+            .frame(height: isMac ? 46 : 42)
             .background {
                 if isSelected {
                     Color.clear
@@ -599,15 +605,15 @@ struct ContentView: View {
     private var emptyLibraryState: some View {
         VStack(spacing: 14) {
             Image(systemName: libraryFilter == .needsUpdate ? "checkmark.seal.fill" : "music.note.list")
-                .font(.system(size: 40))
+                .font(.system(size: isMac ? 48 : 40))
                 .foregroundStyle(libraryFilter == .needsUpdate ? Color.green.opacity(0.8) : .secondary)
 
             Text(emptyStateTitle)
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .font(.system(size: isMac ? 20 : 17, weight: .semibold, design: .rounded))
                 .foregroundStyle(.primary)
 
             Text(emptyStateSubtitle)
-                .font(.system(size: 13))
+                .font(.system(size: isMac ? 15 : 13))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
@@ -653,11 +659,11 @@ struct ContentView: View {
 
                 if let subtitle = subtitle {
                     Text(subtitle)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: isMac ? 15 : 13, weight: .medium))
                         .foregroundStyle(.secondary)
                 } else if let errorMessage = viewModel.errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: isMac ? 15 : 13, weight: .medium))
                         .foregroundStyle(Color(red: 1.0, green: 0.72, blue: 0.67))
                         .lineLimit(2)
                 }
@@ -712,7 +718,7 @@ struct ContentView: View {
             Spacer()
 
             Text("Sync \(viewModel.lyricOffsetMs >= 0 ? "+" : "")\(viewModel.lyricOffsetMs) ms")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: isMac ? 15 : 13, weight: .medium))
                 .foregroundStyle(.secondary)
         }
     }
@@ -792,7 +798,10 @@ struct ContentView: View {
                         .background(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.14), in: Circle())
                         .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LiquidScaleButtonStyle())
+                .highPriorityGesture(TapGesture().onEnded {
+                    viewModel.togglePlayback()
+                })
 
                 Button {
                     viewModel.playNextTrack()
@@ -804,7 +813,10 @@ struct ContentView: View {
                         .background(colorScheme == .light ? Color.black.opacity(0.05) : Color.white.opacity(0.10), in: Circle())
                         .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LiquidScaleButtonStyle())
+                .highPriorityGesture(TapGesture().onEnded {
+                    viewModel.playNextTrack()
+                })
             }
         }
         .padding(.horizontal, 14)
@@ -821,7 +833,9 @@ struct ContentView: View {
     private var compactArtworkView: some View {
         Group {
             #if canImport(UIKit)
-            if let artwork = viewModel.artwork {
+            if viewModel.isMotionArtworkEnabled, let motionURL = viewModel.motionArtworkURL {
+                MotionArtworkPlayerView(streamURL: motionURL)
+            } else if let artwork = viewModel.artwork {
                 Image(uiImage: artwork)
                     .resizable()
                     .scaledToFill()
@@ -839,7 +853,9 @@ struct ContentView: View {
     private var artworkView: some View {
         Group {
             #if canImport(UIKit)
-            if let artwork = viewModel.artwork {
+            if viewModel.isMotionArtworkEnabled, let motionURL = viewModel.motionArtworkURL {
+                MotionArtworkPlayerView(streamURL: motionURL)
+            } else if let artwork = viewModel.artwork {
                 Image(uiImage: artwork)
                     .resizable()
                     .scaledToFill()
@@ -884,283 +900,26 @@ struct ContentView: View {
     }
 
     private func lyricsPanel(isFullScreen: Bool = false) -> some View {
-        ScrollViewReader { proxy in
-            VStack(alignment: .leading, spacing: 0) {
-                if (hasTranslations || hasRomanization) && !(isFullScreen && isFullScreenControlsHidden) {
-                    HStack(spacing: 8) {
-                        if hasRomanization {
-                            Toggle(isOn: $viewModel.isRomanizationEnabled) {
-                                Text("Romaji")
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            .toggleStyle(.button)
-                            .tint(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18))
-                        }
-
-                        if hasTranslations {
-                            Toggle(isOn: $viewModel.isTranslationEnabled) {
-                                Text("Translation")
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            .toggleStyle(.button)
-                            .tint(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18))
-                        }
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 8)
-                }
-
-                ScrollView(showsIndicators: false) {
-                    let activeID: UUID? = viewModel.activeLineID(for: displayedTimeMs)
-                    let activeIndex: Int = viewModel.lines.firstIndex { $0.id == activeID } ?? -1
-                    let lyricLines: [LyricLine] = viewModel.lines.filter { !$0.isSongwriter }
-
-                    VStack(spacing: 0) {
-                        if viewModel.isLoadingLyrics {
-                            VStack(spacing: 12) {
-                                ProgressView()
-                                    .tint(.primary)
-                                Text("Fetching lyrics from Spicy Lyrics...")
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 80)
-                        } else if viewModel.lines.isEmpty {
-                            Spacer(minLength: 0)
-                        } else {
-                            ForEach(Array(lyricLines.enumerated()), id: \.element.id) { index, line in
-                                lyricLineRow(
-                                    line: line,
-                                    index: index,
-                                    activeID: activeID,
-                                    activeIndex: activeIndex
-                                )
-                            }
-
-                            SpicyLyricsAttributionFooterView(
-                                source: viewModel.lyricsSource,
-                                attribution: viewModel.lyricsAttribution,
-                                songwriters: viewModel.lyricsSongwriters
-                            )
-                            .padding(.top, 36)
-                            .padding(.bottom, 64)
-                        }
-                    }
-                    .padding(.top, isFullScreen ? 64 : 52)
-                    .padding(.bottom, 36)
-                    .animation(.spring(response: 0.52, dampingFraction: 0.88), value: activeID)
-                }
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 4)
-                        .onChanged { _ in
-                            isUserScrollingLyrics = true
-                            userScrollResumeTask?.cancel()
-                            userScrollResumeTask = Task {
-                                try? await Task.sleep(nanoseconds: 4_500_000_000)
-                                if !Task.isCancelled {
-                                    await MainActor.run {
-                                        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                                            isUserScrollingLyrics = false
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                )
-                .scrollClipDisabled()
-            }
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0),
-                        .init(color: .black, location: 0.025),
-                        .init(color: .black, location: 0.94),
-                        .init(color: .clear, location: 1)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .padding(.horizontal, 20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                Group {
-                    if !isFullScreen {
-                        RoundedRectangle(cornerRadius: 30, style: .continuous)
-                            .fill(colorScheme == .light ? Color.black.opacity(0.03) : Color.white.opacity(0.08))
-                    }
-                }
-            )
-            .overlay(
-                Group {
-                    if !isFullScreen {
-                        RoundedRectangle(cornerRadius: 30, style: .continuous)
-                            .stroke(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.08), lineWidth: 1)
-                    }
-                }
-            )
-            .overlay(alignment: .bottom) {
-                if isUserScrollingLyrics, let activeID = viewModel.activeLineID(for: displayedTimeMs) {
-                    Button {
-                        userScrollResumeTask?.cancel()
-                        withAnimation(.spring(response: 0.52, dampingFraction: 0.88)) {
-                            isUserScrollingLyrics = false
-                            proxy.scrollTo(activeID, anchor: lyricsScrollAnchor(for: activeID))
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.uturn.backward.circle.fill")
-                                .font(.system(size: 13, weight: .bold))
-                            Text("Center")
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        }
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .overlay(Capsule().stroke(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18), lineWidth: 1))
-                        .shadow(color: Color.black.opacity(colorScheme == .light ? 0.12 : 0.3), radius: 8, y: 4)
-                    }
-                    .buttonStyle(.plain)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 12)
-                }
-            }
-            .onChange(of: viewModel.activeLineID(for: displayedTimeMs), initial: false) { _, activeID in
-                guard let activeID = activeID else {
-                    return
-                }
-
-                if !isUserScrollingLyrics {
-                    withAnimation(.spring(response: 0.52, dampingFraction: 0.88)) {
-                        proxy.scrollTo(activeID, anchor: lyricsScrollAnchor(for: activeID))
-                    }
-                }
-            }
-            .onChange(of: viewModel.currentTrackId) { _, _ in
-                isUserScrollingLyrics = false
-                userScrollResumeTask?.cancel()
-                Task { @MainActor in
-                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? viewModel.lines.first?.id {
-                        proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
-                    }
-                    try? await Task.sleep(nanoseconds: 80_000_000)
-                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? viewModel.lines.first?.id {
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                            proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
-                        }
-                    }
-                }
-            }
-            .onChange(of: viewModel.lines.map(\.id)) { _, newIds in
-                isUserScrollingLyrics = false
-                guard !newIds.isEmpty else { return }
-                Task { @MainActor in
-                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? newIds.first {
-                        proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
-                    }
-                    try? await Task.sleep(nanoseconds: 80_000_000)
-                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? newIds.first {
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                            proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
-                        }
-                    }
-                }
-            }
-            .onAppear {
-                isUserScrollingLyrics = false
-                Task { @MainActor in
-                    if let activeID = viewModel.activeLineID(for: displayedTimeMs) ?? viewModel.lines.first?.id {
-                        proxy.scrollTo(activeID, anchor: lyricsScrollAnchor(for: activeID))
-                    }
-                }
-            }
-        }
-    }
-
-    private func lyricsScrollAnchor(for lineID: UUID?) -> UnitPoint {
-        guard let lineID = lineID else { return .center }
-        let visibleLines = viewModel.lines.filter { !$0.isSongwriter }
-        guard let index = visibleLines.firstIndex(where: { $0.id == lineID }) else {
-            return .center
-        }
-        if index == 0 {
-            return UnitPoint(x: 0.5, y: isFullScreenNowPlaying ? 0.28 : 0.24)
-        } else if index == 1 {
-            return UnitPoint(x: 0.5, y: isFullScreenNowPlaying ? 0.32 : 0.36)
-        } else {
-            return .center
-        }
-    }
-
-    @ViewBuilder
-    private func lyricLineRow(
-        line: LyricLine,
-        index: Int,
-        activeID: UUID?,
-        activeIndex: Int
-    ) -> some View {
-        let effectiveEnd: Int = max(line.endMs, line.words.last?.endMs ?? line.startMs)
-        let isTimeActive: Bool = (line.startMs <= displayedTimeMs && displayedTimeMs <= effectiveEnd)
-        let isPast: Bool = (displayedTimeMs > effectiveEnd)
-        let isActive: Bool = isTimeActive
-        let distance: Int = activeIndex >= 0 ? (index - activeIndex) : 0
-        let lineTimeMs: Int = (isActive || line.isInterlude) ? displayedTimeMs : (isPast ? line.endMs : 0)
-        let lineColor: Color = viewModel.colorForLine(index: index, agent: line.agent, oppositeAligned: line.oppositeAligned, colorScheme: colorScheme)
-
-        SpicyLyricLineView(
-            line: line,
-            currentTimeMs: lineTimeMs,
-            isLineActive: isActive,
-            isLinePast: isPast,
-            distance: distance,
-            isRomanizationEnabled: viewModel.isRomanizationEnabled,
-            isTranslationEnabled: viewModel.isTranslationEnabled,
-            isUserScrolling: isUserScrollingLyrics,
-            fontDesign: viewModel.lyricsFontDesign.fontDesign,
-            fontSize: viewModel.lyricsFontSize.leadSize,
-            isGlowEnabled: viewModel.isLyricsGlowEnabled,
-            isBounceEnabled: viewModel.isLyricsBounceEnabled,
-            activeColor: lineColor,
-            onSeek: { seekMs in
-                userScrollResumeTask?.cancel()
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                    isUserScrollingLyrics = false
-                }
-                viewModel.seek(to: seekMs)
-            }
+        LyricsPanelView(
+            timeKeeper: viewModel.timeKeeper,
+            viewModel: viewModel,
+            isFullScreen: isFullScreen,
+            isFullScreenControlsHidden: isFullScreenControlsHidden,
+            isFullScreenNowPlaying: isFullScreenNowPlaying
         )
-        .equatable()
-        .id(line.id)
     }
 
     private var controls: some View {
-        ZStack {
-            // Far left control
-            HStack {
-                controlButton(systemName: "shuffle", isActive: viewModel.isShuffleEnabled, isAction: false) {
-                    viewModel.toggleShuffle()
-                }
-                Spacer()
+        HStack(spacing: 0) {
+            // Far left control: Shuffle
+            controlButton(systemName: "shuffle", isActive: viewModel.isShuffleEnabled, isAction: false) {
+                viewModel.toggleShuffle()
             }
 
-            // Far right control: Open Spotify
-            HStack {
-                Spacer()
-                Button {
-                    openSpotifyApp()
-                } label: {
-                    SpotifyLogoShape(size: 24, color: .primary)
-                        .frame(width: 52, height: 52)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Open in Spotify")
-            }
+            Spacer(minLength: 8)
 
-            // Centered controls
-            HStack(spacing: 24) {
+            // Centered controls: Backward, Play/Pause, Forward
+            HStack(spacing: isMac ? 20 : 24) {
                 controlButton(systemName: "backward.fill") {
                     viewModel.playPreviousTrack()
                 }
@@ -1172,12 +931,31 @@ struct ContentView: View {
                         .frame(width: 66, height: 66)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(LiquidScaleButtonStyle())
+                .highPriorityGesture(TapGesture().onEnded {
+                    viewModel.togglePlayback()
+                })
 
                 controlButton(systemName: "forward.fill") {
                     viewModel.playNextTrack()
                 }
             }
+
+            Spacer(minLength: 8)
+
+            // Far right control: Open Spotify
+            Button {
+                openSpotifyApp()
+            } label: {
+                SpotifyLogoShape(size: 24, color: .primary)
+                    .frame(width: isMac ? 56 : 52, height: isMac ? 56 : 52)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(LiquidScaleButtonStyle())
+            .highPriorityGesture(TapGesture().onEnded {
+                openSpotifyApp()
+            })
+            .help("Open in Spotify")
         }
         .padding(.horizontal, 8)
     }
@@ -1194,12 +972,15 @@ struct ContentView: View {
 
         return Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: isMac ? 24 : 22, weight: .semibold))
                 .foregroundStyle(foregroundColor)
-                .frame(width: 52, height: 52)
+                .frame(width: isMac ? 56 : 52, height: isMac ? 56 : 52)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LiquidScaleButtonStyle())
+        .highPriorityGesture(TapGesture().onEnded {
+            action()
+        })
     }
 
     private func openSpotifyApp() {
@@ -1225,7 +1006,7 @@ struct ContentView: View {
     private func syncButton(title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: isMac ? 15 : 13, weight: .semibold))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
@@ -1238,7 +1019,161 @@ struct ContentView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Mac Side-by-Side Now Playing Layout
+    @ViewBuilder
+    private func macSideBySideNowPlayingView(isFullScreen: Bool) -> some View {
+        GeometryReader { geo in
+            let totalWidth = geo.size.width
+            let totalHeight = geo.size.height
+            let isCompactWindow = totalWidth < 680
+
+            if isCompactWindow {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 16) {
+                        heroPanel
+                        timelineSeekBar
+                        controls
+                        lyricsPanel(isFullScreen: isFullScreen)
+                    }
+                    .padding(.top, isFullScreen ? 36 : 0)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
+                }
+            } else {
+                HStack(spacing: 0) {
+                    // Left Column: Album Cover, Scrubber, Title & Author, Controls
+                    let leftColWidth = max(340, min(totalWidth * 0.44, 480))
+                    let maxArtByWidth = leftColWidth - 48
+                    let maxArtByHeight = totalHeight * 0.48
+                    let artworkSize = max(240, min(maxArtByWidth, maxArtByHeight, 380))
+
+                    VStack(spacing: 14) {
+                        Spacer(minLength: 16)
+
+                        dynamicArtworkView(size: artworkSize)
+                            .shadow(color: .black.opacity(colorScheme == .light ? 0.20 : 0.50), radius: 24, x: 0, y: 12)
+
+                        TimelineSeekBarView(
+                            timeKeeper: viewModel.timeKeeper,
+                            viewModel: viewModel,
+                            isCompactHorizontal: true
+                        )
+                        .frame(width: artworkSize)
+
+                        VStack(spacing: 4) {
+                            MarqueeText(
+                                text: viewModel.displayTrackTitle,
+                                font: .system(size: isFullScreen ? 28 : 24, weight: .bold, design: .rounded),
+                                color: .primary,
+                                alignment: .center
+                            )
+
+                            MarqueeText(
+                                text: viewModel.displayTrackArtist,
+                                font: .system(size: isFullScreen ? 17 : 15, weight: .semibold, design: .rounded),
+                                color: .secondary,
+                                alignment: .center
+                            )
+                        }
+                        .frame(maxWidth: max(artworkSize, min(leftColWidth - 48, 400)))
+
+                        controls
+                            .frame(maxWidth: leftColWidth - 32)
+
+                        Spacer(minLength: 16)
+                    }
+                    .padding(.top, isFullScreen ? 36 : 0)
+                    .frame(width: leftColWidth)
+                    .contentShape(Rectangle())
+
+                    // Right Column: Lyrics
+                    Group {
+                        if !viewModel.lines.isEmpty || viewModel.isLoadingLyrics {
+                            lyricsPanel(isFullScreen: isFullScreen)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .padding(.trailing, 24)
+                        } else {
+                            VStack(spacing: 12) {
+                                Spacer()
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 44))
+                                    .foregroundStyle(.secondary.opacity(0.6))
+                                Text("No Lyrics Available")
+                                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.primary)
+                                Text("No synchronized lyrics found for this track.")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(.trailing, 24)
+                        }
+                    }
+                    .padding(.top, isFullScreen ? 36 : 0)
+                    .clipped()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
     private var fullScreenNowPlayingView: some View {
+        ZStack(alignment: .topTrailing) {
+            #if canImport(UIKit)
+            PlayerBackgroundView(
+                style: viewModel.backgroundStyle,
+                artwork: viewModel.artwork,
+                motionURL: viewModel.isMotionArtworkEnabled ? (viewModel.motionArtworkTallURL ?? viewModel.motionArtworkURL) : nil,
+                paletteHexes: viewModel.artworkPaletteHexes
+            )
+            .ignoresSafeArea()
+            .animation(.easeInOut(duration: 0.35), value: viewModel.backgroundStyle)
+            #else
+            (colorScheme == .light ? Color.white : Color.black).ignoresSafeArea()
+            #endif
+
+            if isMac {
+                macSideBySideNowPlayingView(isFullScreen: true)
+            } else {
+                iosFullScreenNowPlayingView
+            }
+
+            if isMac {
+                Button {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                        isFullScreenNowPlaying = false
+                        isFullScreenControlsHidden = false
+                    }
+                } label: {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 38, height: 38)
+                        .modifier(MiniPlayerButtonBackgroundModifier())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(LiquidScaleButtonStyle())
+                .contentShape(Circle())
+                .highPriorityGesture(
+                    TapGesture().onEnded {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                            isFullScreenNowPlaying = false
+                            isFullScreenControlsHidden = false
+                        }
+                    }
+                )
+                .keyboardShortcut(.escape, modifiers: [])
+                .padding(.top, 48)
+                .padding(.trailing, 24)
+                .zIndex(100)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+    }
+
+    private var iosFullScreenNowPlayingView: some View {
         VStack(spacing: isFullScreenControlsHidden ? 12 : 20) {
             // Header with dismiss button and title
             if !isFullScreenControlsHidden {
@@ -1250,33 +1185,42 @@ struct ContentView: View {
                         }
                     } label: {
                         Image(systemName: "chevron.down")
-                            .font(.system(size: isMac ? 17 : 15, weight: .bold))
+                            .font(.system(size: isMac ? 18 : 15, weight: .bold))
                             .foregroundStyle(.primary)
                             .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
                             .modifier(MiniPlayerButtonBackgroundModifier())
                             .contentShape(Circle())
                     }
-                    .buttonStyle(LiquidScaleButtonStyle())
+                    .buttonStyle(.plain)
+                    .contentShape(Circle())
+                    .highPriorityGesture(
+                        TapGesture().onEnded {
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                                isFullScreenNowPlaying = false
+                                isFullScreenControlsHidden = false
+                            }
+                        }
+                    )
 
                     Spacer()
 
                     Text("Now Playing")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: isMac ? 20 : 17, weight: .semibold))
                         .foregroundStyle(.primary)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                isFullScreenControlsHidden.toggle()
+                            }
+                        }
 
                     Spacer()
 
                     Color.clear
                         .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, 16)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                        isFullScreenControlsHidden.toggle()
-                    }
-                }
+                .padding(.horizontal, isMac ? 24 : 18)
+                .padding(.top, isMac ? 20 : 16)
                 .transition(.asymmetric(
                     insertion: .opacity.combined(with: .move(edge: .top)),
                     removal: .opacity.combined(with: .move(edge: .top))
@@ -1338,13 +1282,13 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         MarqueeText(
                             text: viewModel.nowPlayingTitle,
-                            font: .system(size: 24, weight: .bold),
+                            font: .system(size: isMac ? 30 : 24, weight: .bold),
                             color: .primary
                         )
 
                         MarqueeText(
                             text: viewModel.authorMetadata,
-                            font: .system(size: 15, weight: .medium),
+                            font: .system(size: isMac ? 18 : 15, weight: .medium),
                             color: .secondary
                         )
                     }
@@ -1390,15 +1334,17 @@ struct ContentView: View {
     }
 
     private var largeArtworkView: some View {
-        dynamicArtworkView(size: 86)
+        dynamicArtworkView(size: isMac ? 104 : 86)
             .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
     }
 
     private func dynamicArtworkView(size: CGFloat) -> some View {
-        let cornerRadius = min(max(size * 0.045, 8), 16)
+        let cornerRadius = min(max(size * 0.055, 10), 24)
         return Group {
             #if canImport(UIKit)
-            if let artwork = viewModel.artwork {
+            if viewModel.isMotionArtworkEnabled, let motionURL = viewModel.motionArtworkURL {
+                MotionArtworkPlayerView(streamURL: motionURL)
+            } else if let artwork = viewModel.artwork {
                 Image(uiImage: artwork)
                     .resizable()
                     .scaledToFill()
@@ -1434,69 +1380,7 @@ struct ContentView: View {
     }
 
     private var timelineSeekBar: some View {
-        let duration = Double(viewModel.durationMs)
-        let current = Double(viewModel.currentTimeMs)
-        let progress = duration > 0 ? current / duration : 0.0
-
-        return VStack(spacing: 6) {
-            GeometryReader { proxy in
-                let trackWidth = proxy.size.width
-                let progressWidth = isDraggingSlider
-                    ? max(0, min(dragValue / max(duration, 1) * trackWidth, trackWidth))
-                    : max(0, min(progress * trackWidth, trackWidth))
-
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18))
-                        .frame(height: 8)
-
-                    Capsule()
-                        .fill(Color.primary)
-                        .frame(width: progressWidth, height: 8)
-                }
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { gesture in
-                            isDraggingSlider = true
-                            let locationX = gesture.location.x
-                            let percentage = max(0, min(locationX / trackWidth, 1.0))
-                            dragValue = percentage * max(duration, 1)
-                        }
-                        .onEnded { gesture in
-                            let locationX = gesture.location.x
-                            let percentage = max(0, min(locationX / trackWidth, 1.0))
-                            let targetTime = percentage * max(duration, 1)
-                            viewModel.seek(to: Int(targetTime))
-
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                isDraggingSlider = false
-                            }
-                        }
-                )
-            }
-            .frame(height: 10)
-
-            HStack {
-                Text(timecode(Int(isDraggingSlider ? dragValue : current)))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Text(timecode(viewModel.durationMs))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .disabled(viewModel.durationMs == 0)
-    }
-
-    private func timecode(_ ms: Int) -> String {
-        let totalSeconds = max(ms / 1000, 0)
-        let minutes = totalSeconds / 60
-        let seconds = totalSeconds % 60
-        return String(format: "%02d:%02d", minutes, seconds)
+        TimelineSeekBarView(timeKeeper: viewModel.timeKeeper, viewModel: viewModel)
     }
 
     private var introductionView: some View {
@@ -1599,18 +1483,18 @@ struct ContentView: View {
     private func tutorialRow(systemImage: String, title: String, description: String) -> some View {
         HStack(alignment: .top, spacing: 18) {
             Image(systemName: systemImage)
-                .font(.system(size: 28))
+                .font(.system(size: isMac ? 32 : 28))
                 .foregroundStyle(Color(red: 0.11, green: 0.85, blue: 0.45))
-                .frame(width: 36)
+                .frame(width: isMac ? 40 : 36)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: isMac ? 19 : 17, weight: .bold))
                     .foregroundStyle(.primary)
 
                 Text(description)
-                    .font(.system(size: 14, weight: .regular))
+                    .font(.system(size: isMac ? 16 : 14, weight: .regular))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1794,44 +1678,82 @@ private struct PlayerBackgroundView: View {
     @Environment(\.colorScheme) private var colorScheme
     let style: PlayerBackgroundStyle
     let artwork: UIImage?
+    var motionURL: URL? = nil
+    var paletteHexes: [String] = []
+
+    private var paletteColors: [Color] {
+        if paletteHexes.isEmpty {
+            return [
+                Color(hex: "#38BDF8"),
+                Color(hex: "#818CF8"),
+                Color(hex: "#C084FC"),
+                Color(hex: "#F472B6")
+            ]
+        }
+        return paletteHexes.map { Color(hex: $0) }
+    }
 
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
+            let isLight = colorScheme == .light
+            let c0 = paletteColors[0 % paletteColors.count]
+            let c1 = paletteColors[1 % paletteColors.count]
+
             ZStack {
                 switch style {
                 case .black:
-                    colorScheme == .light ? Color(uiColor: .systemBackground) : Color.black
+                    isLight ? Color(uiColor: .systemBackground) : Color.black
 
                 case .blurred:
                     ZStack {
-                        colorScheme == .light ? Color(uiColor: .systemBackground) : Color(red: 0.07, green: 0.07, blue: 0.09)
+                        // 1. Ambient underlay from the album's exact dominant palette
+                        LinearGradient(
+                            colors: isLight
+                                ? [c0.opacity(0.18), Color(uiColor: .systemBackground), c1.opacity(0.12)]
+                                : [c0.opacity(0.24), Color(red: 0.05, green: 0.05, blue: 0.07), c1.opacity(0.18)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
 
-                        if let artwork {
+                        // 2. High-vibrancy blurred artwork (or motion artwork)
+                        if let motionURL {
+                            MotionArtworkPlayerView(streamURL: motionURL)
+                                .frame(width: size.width, height: size.height)
+                                .scaleEffect(1.30)
+                                .blur(radius: 60)
+                                .saturation(1.15)
+                                .contrast(1.02)
+                                .opacity(isLight ? 0.35 : 0.50)
+                                .clipped()
+                        } else if let artwork {
                             Image(uiImage: artwork)
                                 .resizable()
                                 .scaledToFill()
                                 .frame(width: size.width, height: size.height)
-                                .scaleEffect(1.15)
+                                .scaleEffect(1.30)
                                 .blur(radius: 65)
-                                .opacity(colorScheme == .light ? 0.35 : 0.50)
+                                .saturation(1.15)
+                                .contrast(1.02)
+                                .opacity(isLight ? 0.35 : 0.50)
                                 .clipped()
                         } else {
                             LinearGradient(
-                                colors: colorScheme == .light
+                                colors: isLight
                                     ? [Color(red: 0.94, green: 0.95, blue: 0.98), Color(uiColor: .systemBackground)]
-                                    : [Color(red: 0.10, green: 0.10, blue: 0.14), Color.black],
+                                    : [Color(red: 0.08, green: 0.08, blue: 0.12), Color.black],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         }
 
+                        // 3. Apple Music-style contrast scrim that ensures high legibility and rich deep tones
                         Rectangle()
                             .fill(
                                 LinearGradient(
-                                    colors: colorScheme == .light
+                                    colors: isLight
                                         ? [Color.white.opacity(0.40), Color.white.opacity(0.85)]
-                                        : [Color.black.opacity(0.35), Color.black.opacity(0.85)],
+                                        : [Color.black.opacity(0.38), Color.black.opacity(0.82)],
                                     startPoint: .top,
                                     endPoint: .bottom
                                 )
@@ -1843,17 +1765,9 @@ private struct PlayerBackgroundView: View {
                 case .gradient:
                     ZStack {
                         LinearGradient(
-                            colors: colorScheme == .light
-                                ? [
-                                    Color(red: 0.92, green: 0.94, blue: 0.98),
-                                    Color(red: 0.96, green: 0.92, blue: 0.95),
-                                    Color(red: 0.94, green: 0.96, blue: 0.98)
-                                  ]
-                                : [
-                                    Color(red: 0.11, green: 0.13, blue: 0.18),
-                                    Color(red: 0.16, green: 0.10, blue: 0.14),
-                                    Color(red: 0.06, green: 0.07, blue: 0.09)
-                                  ],
+                            colors: isLight
+                                ? [c0.opacity(0.14), c1.opacity(0.08), Color(uiColor: .systemBackground)]
+                                : [c0.opacity(0.22), c1.opacity(0.14), Color(red: 0.05, green: 0.05, blue: 0.07)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -1863,20 +1777,25 @@ private struct PlayerBackgroundView: View {
                                 .resizable()
                                 .scaledToFill()
                                 .frame(width: size.width, height: size.height)
-                                .scaleEffect(1.15)
+                                .scaleEffect(1.25)
                                 .blur(radius: 65)
-                                .opacity(colorScheme == .light ? 0.20 : 0.24)
+                                .saturation(1.15)
+                                .opacity(isLight ? 0.18 : 0.28)
                                 .clipped()
                         }
 
                         Rectangle()
-                            .fill(colorScheme == .light ? Color.white.opacity(0.55) : Color.black.opacity(0.65))
+                            .fill(isLight ? Color.white.opacity(0.48) : Color.black.opacity(0.62))
                     }
                     .frame(width: size.width, height: size.height)
                     .clipped()
 
                 case .moving:
-                    AnimatedArtworkBackground(artwork: artwork)
+                    if let motionURL {
+                        MotionArtworkBackgroundView(motionURL: motionURL, artwork: artwork, paletteHexes: paletteHexes)
+                    } else {
+                        AnimatedArtworkBackground(artwork: artwork, paletteHexes: paletteHexes)
+                    }
                 }
             }
             .frame(width: size.width, height: size.height)
@@ -1885,67 +1804,183 @@ private struct PlayerBackgroundView: View {
         .ignoresSafeArea()
     }
 }
-#endif
+
+private struct MotionArtworkBackgroundView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let motionURL: URL
+    let artwork: UIImage?
+    var paletteHexes: [String] = []
+
+    private var paletteColors: [Color] {
+        if paletteHexes.isEmpty {
+            return [Color(hex: "#38BDF8"), Color(hex: "#818CF8")]
+        }
+        return paletteHexes.map { Color(hex: $0) }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let isLight = colorScheme == .light
+            let c0 = paletteColors[0 % paletteColors.count]
+            let c1 = paletteColors[1 % paletteColors.count]
+
+            ZStack {
+                // Ambient underlay
+                LinearGradient(
+                    colors: isLight
+                        ? [c0.opacity(0.18), Color(uiColor: .systemBackground), c1.opacity(0.12)]
+                        : [c0.opacity(0.24), Color(red: 0.05, green: 0.05, blue: 0.07), c1.opacity(0.18)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                // High-vibrancy motion video
+                MotionArtworkPlayerView(streamURL: motionURL)
+                    .frame(width: size.width, height: size.height)
+                    .scaleEffect(1.30)
+                    .blur(radius: 55)
+                    .saturation(1.15)
+                    .contrast(1.02)
+                    .opacity(isLight ? 0.38 : 0.52)
+                    .clipped()
+
+                // Protective scrim
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: isLight
+                                ? [Color.white.opacity(0.40), Color.white.opacity(0.85)]
+                                : [Color.black.opacity(0.38), Color.black.opacity(0.82)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+            .frame(width: size.width, height: size.height)
+            .clipped()
+        }
+    }
+}
 
 private struct AnimatedArtworkBackground: View {
     @Environment(\.colorScheme) private var colorScheme
     let artwork: UIImage?
+    var paletteHexes: [String] = []
+
+    private var paletteColors: [Color] {
+        if paletteHexes.isEmpty {
+            return [
+                Color(hex: "#38BDF8"),
+                Color(hex: "#818CF8"),
+                Color(hex: "#C084FC"),
+                Color(hex: "#F472B6")
+            ]
+        }
+        return paletteHexes.map { Color(hex: $0) }
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             GeometryReader { proxy in
                 let size = proxy.size
                 let time = context.date.timeIntervalSinceReferenceDate
                 let isLight = colorScheme == .light
+                let c0 = paletteColors[0 % paletteColors.count]
+                let c1 = paletteColors[1 % paletteColors.count]
+                let c2 = paletteColors[2 % paletteColors.count]
+                let c3 = paletteColors[3 % paletteColors.count]
 
                 ZStack {
+                    // 1. Deep ambient gradient matching the album art colors
                     LinearGradient(
                         colors: isLight
-                            ? [Color(red: 0.92, green: 0.94, blue: 0.98), Color(red: 0.97, green: 0.93, blue: 0.95)]
-                            : [Color(red: 0.08, green: 0.09, blue: 0.12), Color(red: 0.16, green: 0.12, blue: 0.14)],
+                            ? [c0.opacity(0.18), Color(uiColor: .systemBackground), c1.opacity(0.12)]
+                            : [c0.opacity(0.25), Color(red: 0.05, green: 0.05, blue: 0.07), c1.opacity(0.20)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
 
-                    orb(
-                        color: Color(red: 1.0, green: 0.54, blue: 0.45),
-                        size: min(size.width, size.height) * 0.72,
-                        x: size.width * (0.14 + 0.08 * sin(time * 0.35)),
-                        y: size.height * (0.20 + 0.10 * cos(time * 0.28)),
-                        isLight: isLight
-                    )
-
-                    orb(
-                        color: Color(red: 0.98, green: 0.82, blue: 0.63),
-                        size: min(size.width, size.height) * 0.52,
-                        x: size.width * (0.82 + 0.08 * cos(time * 0.26)),
-                        y: size.height * (0.28 + 0.12 * sin(time * 0.31)),
-                        isLight: isLight
-                    )
-
-                    orb(
-                        color: Color(red: 0.88, green: 0.36, blue: 0.28),
-                        size: min(size.width, size.height) * 0.66,
-                        x: size.width * (0.58 + 0.07 * sin(time * 0.20)),
-                        y: size.height * (0.84 + 0.05 * cos(time * 0.23)),
-                        isLight: isLight
-                    )
-
+                    // 2. Animated Fluid Artwork Layers: Moving the actual artwork!
                     if let artwork {
+                        // Primary artwork drift & gentle breathing pulse
                         Image(uiImage: artwork)
                             .resizable()
                             .scaledToFill()
-                            .blur(radius: 90)
-                            .opacity(isLight ? 0.22 : 0.34)
-                            .ignoresSafeArea()
+                            .frame(width: size.width, height: size.height)
+                            .scaleEffect(1.32 + 0.05 * sin(time * 0.16))
+                            .offset(
+                                x: 20 * sin(time * 0.22),
+                                y: 16 * cos(time * 0.18)
+                            )
+                            .rotationEffect(.degrees(3.0 * sin(time * 0.12)))
+                            .blur(radius: 65)
+                            .saturation(1.15)
+                            .contrast(1.02)
+                            .opacity(isLight ? 0.35 : 0.48)
+
+                        // Secondary counter-moving artwork layer: rotated/offset to create liquid color mixing
+                        Image(uiImage: artwork)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: size.width, height: size.height)
+                            .scaleEffect(1.42 + 0.06 * cos(time * 0.14))
+                            .offset(
+                                x: -22 * cos(time * 0.20),
+                                y: -18 * sin(time * 0.25)
+                            )
+                            .rotationEffect(.degrees(-4.0 * cos(time * 0.15) + 180))
+                            .blur(radius: 75)
+                            .saturation(1.15)
+                            .contrast(1.02)
+                            .opacity(isLight ? 0.14 : 0.22)
+                            .blendMode(isLight ? .softLight : .screen)
                     }
 
+                    // 3. Radiant Floating Color Blooms using the extracted album art palette
+                    orb(
+                        color: c0,
+                        size: min(size.width, size.height) * 0.88,
+                        x: size.width * (0.22 + 0.14 * sin(time * 0.26)),
+                        y: size.height * (0.24 + 0.12 * cos(time * 0.20)),
+                        isLight: isLight,
+                        opacity: isLight ? 0.16 : 0.25
+                    )
+
+                    orb(
+                        color: c1,
+                        size: min(size.width, size.height) * 0.78,
+                        x: size.width * (0.76 + 0.13 * cos(time * 0.22)),
+                        y: size.height * (0.34 + 0.14 * sin(time * 0.28)),
+                        isLight: isLight,
+                        opacity: isLight ? 0.15 : 0.23
+                    )
+
+                    orb(
+                        color: c2,
+                        size: min(size.width, size.height) * 0.92,
+                        x: size.width * (0.50 + 0.15 * sin(time * 0.18 + 1.2)),
+                        y: size.height * (0.76 + 0.12 * cos(time * 0.24 + 0.7)),
+                        isLight: isLight,
+                        opacity: isLight ? 0.15 : 0.23
+                    )
+
+                    orb(
+                        color: c3,
+                        size: min(size.width, size.height) * 0.68,
+                        x: size.width * (0.20 + 0.12 * cos(time * 0.30 + 2.0)),
+                        y: size.height * (0.62 + 0.14 * sin(time * 0.19 + 1.5)),
+                        isLight: isLight,
+                        opacity: isLight ? 0.12 : 0.18
+                    )
+
+                    // 4. Subtle contrast scrim to ensure text and controls remain razor-sharp
                     Rectangle()
                         .fill(
                             LinearGradient(
                                 colors: isLight
-                                    ? [Color.white.opacity(0.20), Color.white.opacity(0.80)]
-                                    : [Color.white.opacity(0.02), Color.black.opacity(0.76)],
+                                    ? [Color.white.opacity(0.40), Color.white.opacity(0.85)]
+                                    : [Color.black.opacity(0.38), Color.black.opacity(0.82)],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -1957,16 +1992,17 @@ private struct AnimatedArtworkBackground: View {
         }
     }
 
-    private func orb(color: Color, size: CGFloat, x: CGFloat, y: CGFloat, isLight: Bool) -> some View {
+    private func orb(color: Color, size: CGFloat, x: CGFloat, y: CGFloat, isLight: Bool, opacity: Double) -> some View {
         Circle()
             .fill(color)
             .frame(width: size, height: size)
             .position(x: x, y: y)
-            .blur(radius: size * 0.22)
-            .opacity(isLight ? 0.30 : 0.52)
-            .blendMode(isLight ? .normal : .screen)
+            .blur(radius: size * 0.28)
+            .opacity(opacity)
+            .blendMode(isLight ? .softLight : .screen)
     }
 }
+#endif
 
 
 private struct MarqueeText: View {
@@ -1980,100 +2016,113 @@ private struct MarqueeText: View {
     @State private var startTime: TimeInterval = Date().timeIntervalSinceReferenceDate
     
     var body: some View {
-        Text(" ")
-            .font(font)
-            .lineLimit(1)
-            .opacity(0)
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: alignment)
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear {
-                            updateContainerWidth(geo.size.width)
-                        }
-                        .onChange(of: geo.size.width) { _, newWidth in
-                            updateContainerWidth(newWidth)
-                        }
-                }
-            )
-            .overlay(alignment: alignment) {
-                if containerWidth > 0 {
-                    let isOverflowing = textWidth > containerWidth + 2
-                    let scrollDistance = max(0, textWidth - containerWidth)
-                    
-                    TimelineView(.animation(paused: !isOverflowing)) { timelineContext in
-                        let offset = calculateOffset(
-                            currentTime: timelineContext.date.timeIntervalSinceReferenceDate,
-                            scrollDistance: scrollDistance,
-                            isOverflowing: isOverflowing
-                        )
-                        
-                        let isLeadingFaded = isOverflowing && -offset > 4
-                        let isTrailingFaded = isOverflowing && -offset < (scrollDistance - 4)
-                        
-                        ZStack(alignment: alignment) {
-                            Text(text)
-                                .font(font)
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                                .background(
-                                    GeometryReader { textGeo in
-                                        Color.clear
-                                            .onAppear {
-                                                updateTextWidth(textGeo.size.width)
-                                            }
-                                            .onChange(of: text) { _, _ in
-                                                updateTextWidth(textGeo.size.width)
-                                            }
-                                            .onChange(of: textGeo.size.width) { _, newWidth in
-                                                updateTextWidth(newWidth)
-                                            }
-                                    }
-                                )
-                                .offset(x: offset)
-                                .frame(width: isOverflowing ? nil : containerWidth, alignment: alignment)
-                        }
-                        .frame(width: containerWidth, alignment: alignment)
-                        .clipped()
-                        .mask(
-                            Group {
-                                if isOverflowing {
-                                    HStack(spacing: 0) {
-                                        if isLeadingFaded {
-                                            LinearGradient(
-                                                colors: [.clear, .black],
-                                                startPoint: .leading,
-                                                endPoint: .trailing
-                                            )
-                                            .frame(width: 12)
-                                        }
-                                        
-                                        Color.black
-                                        
-                                        if isTrailingFaded {
-                                            LinearGradient(
-                                                colors: [.black, .clear],
-                                                startPoint: .leading,
-                                                endPoint: .trailing
-                                            )
-                                            .frame(width: 12)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayText = trimmed.isEmpty ? " " : text
+        let isOverflowing = containerWidth > 0 && textWidth > containerWidth + 2
+        let scrollDistance = max(0, textWidth - containerWidth)
+        
+        ZStack(alignment: isOverflowing ? .leading : alignment) {
+            // Base view: Visible initially and whenever not overflowing
+            Text(displayText)
+                .font(font)
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: alignment)
+                .opacity(isOverflowing ? 0 : 1)
+                .background(
+                    // Invisible unconstrained text measuring exact natural text width
+                    Text(displayText)
+                        .font(font)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .hidden()
+                        .background(
+                            GeometryReader { textGeo in
+                                Color.clear
+                                    .onAppear {
+                                        if textGeo.size.width > 0 {
+                                            updateTextWidth(textGeo.size.width)
                                         }
                                     }
-                                } else {
-                                    Color.black
-                                }
+                                    .onChange(of: textGeo.size.width) { _, newWidth in
+                                        if newWidth > 0 {
+                                            updateTextWidth(newWidth)
+                                        }
+                                    }
                             }
                         )
-                    }
+                        .id(displayText)
+                )
+
+            if isOverflowing {
+                TimelineView(.animation) { timelineContext in
+                    let offset = calculateOffset(
+                        currentTime: timelineContext.date.timeIntervalSinceReferenceDate,
+                        scrollDistance: scrollDistance,
+                        isOverflowing: true
+                    )
+                    
+                    let isLeadingFaded = -offset > 4
+                    let isTrailingFaded = -offset < (scrollDistance - 4)
+                    
+                    Text(displayText)
+                        .font(font)
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .offset(x: offset)
+                        .frame(width: containerWidth, alignment: .leading)
+                        .clipped()
+                        .mask(
+                            HStack(spacing: 0) {
+                                if isLeadingFaded {
+                                    LinearGradient(
+                                        colors: [.clear, .black],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                    .frame(width: 14)
+                                }
+                                
+                                Rectangle()
+                                    .fill(Color.black)
+                                
+                                if isTrailingFaded {
+                                    LinearGradient(
+                                        colors: [.black, .clear],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                    .frame(width: 14)
+                                }
+                            }
+                            .frame(width: containerWidth)
+                        )
                 }
             }
-            .foregroundStyle(color)
-            .onChange(of: text) { _, _ in
-                resetStartTime()
+        }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        if geo.size.width > 0 {
+                            updateContainerWidth(geo.size.width)
+                        }
+                    }
+                    .onChange(of: geo.size.width) { _, newWidth in
+                        if newWidth > 0 {
+                            updateContainerWidth(newWidth)
+                        }
+                    }
             }
-            .onAppear {
-                resetStartTime()
-            }
+        )
+        .clipped()
+        .onChange(of: text) { _, _ in
+            resetStartTime()
+        }
+        .onAppear {
+            resetStartTime()
+        }
     }
     
     private func resetStartTime() {
@@ -2142,9 +2191,9 @@ struct SettingsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Account Status")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: isMac ? 17 : 15, weight: .semibold))
                         Text(viewModel.spotifyService.isAuthenticated ? "Connected" : "Not Connected")
-                            .font(.system(size: 13))
+                            .font(.system(size: isMac ? 15 : 13))
                             .foregroundStyle(viewModel.spotifyService.isAuthenticated ? Color(red: 0.11, green: 0.85, blue: 0.45) : .secondary)
                     }
 
@@ -2225,6 +2274,9 @@ struct SettingsView: View {
                 Toggle("Lyric Bounce", isOn: $viewModel.isLyricsBounceEnabled)
                     .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
 
+                Toggle("Motion Album Artwork", isOn: $viewModel.isMotionArtworkEnabled)
+                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Lyric Color")
@@ -2297,6 +2349,16 @@ struct SettingsView: View {
 
                 Toggle("Distinct Colors for Main & Duet", isOn: $viewModel.isMultiVoiceColorsEnabled)
                     .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
+                Toggle("Colorize Color Words", isOn: $viewModel.isExactColorEnabled)
+                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
+                if viewModel.isExactColorEnabled {
+                    Text("When sung, color words (such as 'red', 'blue', 'green', 'gold') are displayed in their exact named color.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 2)
+                }
 
                 if viewModel.isRainbowColorMode {
                     Text("Rainbow preset is active. Each lyric line cycles through a different rainbow color.")
@@ -2406,33 +2468,69 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
+            Section("Lyrics Synchronization") {
+                Toggle("Auto-Sync Checker", isOn: $viewModel.isAutoSyncCheckerEnabled)
+                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
+                HStack {
+                    Text("Manual Offset")
+                    Spacer()
+                    Text("\(viewModel.lyricOffsetMs >= 0 ? "+" : "")\(viewModel.lyricOffsetMs) ms")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Button("-100ms") { viewModel.adjustLyricOffset(by: -100) }.buttonStyle(.bordered)
+                    Button("-50ms") { viewModel.adjustLyricOffset(by: -50) }.buttonStyle(.bordered)
+                    Button("Reset") { viewModel.resetLyricOffset() }.buttonStyle(.borderedProminent).tint(.secondary)
+                    Button("+50ms") { viewModel.adjustLyricOffset(by: 50) }.buttonStyle(.bordered)
+                    Button("+100ms") { viewModel.adjustLyricOffset(by: 100) }.buttonStyle(.bordered)
+                }
+
+                Button {
+                    Task {
+                        await viewModel.checkAndResyncLyrics(force: true)
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text(viewModel.syncAudit.isAuditing ? "Auditing Sync..." : "Check & Resync Now")
+                        Spacer()
+                        Text(viewModel.syncAudit.statusMessage)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             Section("API Configuration") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Spicy Lyrics API Key")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: isMac ? 15 : 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                     SecureField("Spicy Lyrics Key", text: $spicyLyricsKey)
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(.system(size: isMac ? 14 : 13, design: .monospaced))
                         .autocorrectionDisabled(true)
                         .textInputAutocapitalization(.never)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Spotify Client ID")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: isMac ? 15 : 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                     TextField("Spotify Client ID", text: $spotifyClientId)
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(.system(size: isMac ? 14 : 13, design: .monospaced))
                         .autocorrectionDisabled(true)
                         .textInputAutocapitalization(.never)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Spotify Client Secret (Optional)")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: isMac ? 15 : 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                     SecureField("Optional (Not needed for PKCE)", text: $spotifyClientSecret)
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(.system(size: isMac ? 14 : 13, design: .monospaced))
                         .autocorrectionDisabled(true)
                         .textInputAutocapitalization(.never)
                 }
@@ -2443,7 +2541,7 @@ struct SettingsView: View {
                     APIConfig.spotifyClientSecret = spotifyClientSecret
                     isSavedAlertPresented = true
                 }
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: isMac ? 16 : 14, weight: .semibold))
                 .foregroundStyle(Color(red: 0.11, green: 0.85, blue: 0.45))
 
                 Button("Reset to Defaults") {
@@ -2453,7 +2551,7 @@ struct SettingsView: View {
                     spotifyClientSecret = APIConfig.spotifyClientSecret
                     isSavedAlertPresented = true
                 }
-                .font(.system(size: 13))
+                .font(.system(size: isMac ? 15 : 13))
                 .foregroundStyle(.secondary)
             }
 
@@ -2461,7 +2559,7 @@ struct SettingsView: View {
                 HStack {
                     Text("Version")
                     Spacer()
-                    Text("1.1 (Beta)")
+                    Text("1.1.2 (Beta)")
                         .foregroundStyle(.secondary)
                 }
                 HStack {
@@ -2730,13 +2828,13 @@ struct QueueView: View {
                     if viewModel.playbackQueue.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "music.note.list")
-                                .font(.system(size: 48))
+                                .font(.system(size: isMacPlatform ? 56 : 48))
                                 .foregroundStyle(.secondary)
                             Text("Queue is Empty")
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(.system(size: isMacPlatform ? 20 : 17, weight: .semibold))
                                 .foregroundStyle(.primary)
                             Text("Search songs on Spotify or play from library to populate upcoming tracks.")
-                                .font(.system(size: 13))
+                                .font(.system(size: isMacPlatform ? 15 : 13))
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 32)
@@ -2746,17 +2844,17 @@ struct QueueView: View {
                         List {
                             ForEach(viewModel.playbackQueue) { track in
                                 HStack(spacing: 12) {
-                                    SpotifyArtworkView(url: track.artworkURL, size: 40, cornerRadius: 8)
+                                    SpotifyArtworkView(url: track.artworkURL, size: isMacPlatform ? 48 : 40, cornerRadius: 8)
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(track.name)
-                                            .font(.system(size: 15, weight: .semibold))
+                                            .font(.system(size: isMacPlatform ? 17 : 15, weight: .semibold))
                                             .foregroundStyle(.primary)
                                             .lineLimit(1)
                                             .truncationMode(.tail)
 
                                         Text(track.artistNames)
-                                            .font(.system(size: 12, weight: .medium))
+                                            .font(.system(size: isMacPlatform ? 14 : 12, weight: .medium))
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                             .truncationMode(.tail)
@@ -2817,27 +2915,30 @@ struct LibrarySongRowView: View {
     let onPlay: () -> Void
     let onUpdateTTML: () -> Void
     let onViewTTML: () -> Void
+    var onDeleteTTML: (() -> Void)? = nil
+
+    @State private var showingDeleteAlert = false
 
     var body: some View {
         HStack(spacing: 12) {
             // Artwork
             ZStack {
-                SpotifyArtworkView(url: song.artworkUrl.flatMap(URL.init), size: 48, cornerRadius: 6)
+                SpotifyArtworkView(url: song.artworkUrl.flatMap(URL.init), size: isMacPlatform ? 56 : 48, cornerRadius: 6)
 
                 if isCurrent {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(Color.black.opacity(0.45))
                     Image(systemName: "speaker.wave.2.fill")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: isMacPlatform ? 16 : 14, weight: .bold))
                         .foregroundStyle(Color(red: 0.11, green: 0.73, blue: 0.33))
                 }
             }
-            .frame(width: 48, height: 48)
+            .frame(width: isMacPlatform ? 56 : 48, height: isMacPlatform ? 56 : 48)
 
             // Song Info & Metadata (Apple Music Style)
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.name)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: isMacPlatform ? 17 : 15, weight: .medium))
                     .foregroundStyle(isCurrent ? Color(red: 0.11, green: 0.73, blue: 0.33) : .primary)
                     .lineLimit(1)
 
@@ -2850,7 +2951,7 @@ struct LibrarySongRowView: View {
                             .foregroundStyle(.secondary)
                         HStack(spacing: 3) {
                             Image(systemName: "exclamationmark.circle.fill")
-                                .font(.system(size: 10))
+                                .font(.system(size: isMacPlatform ? 12 : 10))
                             Text("Update Needed")
                         }
                         .foregroundStyle(Color.orange)
@@ -2871,7 +2972,7 @@ struct LibrarySongRowView: View {
                     Text(song.playedAgoDescription)
                         .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 13))
+                .font(.system(size: isMacPlatform ? 15 : 13))
                 .foregroundStyle(.secondary)
             }
 
@@ -2897,6 +2998,15 @@ struct LibrarySongRowView: View {
 
                     Button(action: onUpdateTTML) {
                         Label(song.needsUpdate ? "Update TTML Lyrics" : "Refresh Lyrics", systemImage: "arrow.triangle.2.circlepath")
+                    }
+
+                    if song.hasTTML && onDeleteTTML != nil {
+                        Divider()
+                        Button(role: .destructive) {
+                            showingDeleteAlert = true
+                        } label: {
+                            Label("Delete Saved TTML", systemImage: "trash")
+                        }
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -2928,15 +3038,34 @@ struct LibrarySongRowView: View {
             Button(action: onUpdateTTML) {
                 Label(song.needsUpdate ? "Update TTML Lyrics" : "Refresh Lyrics", systemImage: "arrow.triangle.2.circlepath")
             }
+
+            if song.hasTTML && onDeleteTTML != nil {
+                Divider()
+                Button(role: .destructive) {
+                    showingDeleteAlert = true
+                } label: {
+                    Label("Delete Saved TTML", systemImage: "trash")
+                }
+            }
+        }
+        .alert("Delete Saved TTML?", isPresented: $showingDeleteAlert) {
+            Button("Delete", role: .destructive) {
+                onDeleteTTML?()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to delete the saved TTML for \"\(song.name)\"? This will remove the cached lyrics file from your device.")
         }
     }
 }
 
 struct TTMLViewerSheet: View {
     let song: LibrarySong
+    var onDelete: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var copied = false
+    @State private var showingDeleteAlert = false
 
     var body: some View {
         NavigationStack {
@@ -2944,21 +3073,21 @@ struct TTMLViewerSheet: View {
                 // Track metadata header
                 VStack(alignment: .leading, spacing: 4) {
                     Text(song.name)
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .font(.system(size: isMacPlatform ? 20 : 17, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary)
 
                     Text(song.artistNames)
-                        .font(.system(size: 14))
+                        .font(.system(size: isMacPlatform ? 16 : 14))
                         .foregroundStyle(.secondary)
 
                     HStack(spacing: 8) {
                         Text(song.isTTMLExpired ? "⚠️ Saved over 30 days ago (Update needed)" : "✓ Saved TTML (\(song.daysUntilTTMLExpires) days remaining)")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: isMacPlatform ? 14 : 12, weight: .semibold))
                             .foregroundStyle(song.isTTMLExpired ? .orange : .green)
 
                         if let date = song.ttmlSavedAt {
                             Text("• Saved \(date.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.system(size: 11))
+                                .font(.system(size: isMacPlatform ? 13 : 11))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -2973,7 +3102,7 @@ struct TTMLViewerSheet: View {
                 let effectiveTTML = LibraryManager.shared.getValidSavedTTML(for: song.id) ?? song.ttmlContent
                 ScrollView {
                     Text(effectiveTTML ?? "No TTML saved for this song.")
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: isMacPlatform ? 14 : 12, design: .monospaced))
                         .foregroundStyle(.primary)
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2998,28 +3127,50 @@ struct TTMLViewerSheet: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     let contentToCopy = LibraryManager.shared.getValidSavedTTML(for: song.id) ?? song.ttmlContent
-                    if let content = contentToCopy, !content.isEmpty {
-                        Button {
-                            #if canImport(UIKit)
-                            UIPasteboard.general.string = content
-                            #elseif canImport(AppKit)
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(content, forType: .string)
-                            #endif
-                            copied = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                copied = false
+                    HStack(spacing: 14) {
+                        if onDelete != nil {
+                            Button(role: .destructive) {
+                                showingDeleteAlert = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: isMacPlatform ? 15 : 13, weight: .medium))
+                                    .foregroundStyle(.red)
                             }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                Text(copied ? "Copied" : "Copy TTML")
+                            .help("Delete Saved TTML")
+                        }
+
+                        if let content = contentToCopy, !content.isEmpty {
+                            Button {
+                                #if canImport(UIKit)
+                                UIPasteboard.general.string = content
+                                #elseif canImport(AppKit)
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(content, forType: .string)
+                                #endif
+                                copied = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                    copied = false
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                    Text(copied ? "Copied" : "Copy TTML")
+                                }
+                                .font(.system(size: isMacPlatform ? 16 : 14, weight: .semibold))
+                                .foregroundStyle(.primary)
                             }
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.primary)
                         }
                     }
                 }
+            }
+            .alert("Delete Saved TTML?", isPresented: $showingDeleteAlert) {
+                Button("Delete", role: .destructive) {
+                    onDelete?()
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Are you sure you want to delete the saved TTML for \"\(song.name)\"? This will remove the cached lyrics file from your device.")
             }
         }
         .presentationDetents([.medium, .large])
@@ -3068,5 +3219,381 @@ struct HexColorPicker: View {
         lastReportedHex = parsed.toHex()
     }
 }
+
+// MARK: - Dedicated High-Frequency Views (Prevents parent TabView / ContentView redraw thrashing)
+
+private struct TimelineSeekBarView: View {
+    @ObservedObject var timeKeeper: PlaybackTimeKeeper
+    @ObservedObject var viewModel: PlayerViewModel
+    @Environment(\.colorScheme) private var colorScheme
+    var isCompactHorizontal: Bool = false
+    @State private var isDraggingSlider = false
+    @State private var dragValue: Double = 0.0
+
+    private var current: Double {
+        Double(timeKeeper.currentTimeMs)
+    }
+
+    var body: some View {
+        let duration = Double(viewModel.durationMs)
+        let progress = duration > 0 ? current / duration : 0.0
+
+        if isCompactHorizontal {
+            HStack(spacing: 8) {
+                Text(timecode(Int(isDraggingSlider ? dragValue : current)))
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                sliderTrack(duration: duration, progress: progress, height: 6)
+
+                Text(timecode(viewModel.durationMs))
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .disabled(viewModel.durationMs == 0)
+        } else {
+            VStack(spacing: 6) {
+                sliderTrack(duration: duration, progress: progress, height: isMac ? 10 : 8)
+
+                HStack {
+                    Text(timecode(Int(isDraggingSlider ? dragValue : current)))
+                        .font(.system(size: isMac ? 15 : 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Text(timecode(viewModel.durationMs))
+                        .font(.system(size: isMac ? 15 : 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(viewModel.durationMs == 0)
+        }
+    }
+
+    private func sliderTrack(duration: Double, progress: Double, height: CGFloat) -> some View {
+        GeometryReader { proxy in
+            let trackWidth = proxy.size.width
+            let progressWidth = isDraggingSlider
+                ? max(0, min(dragValue / max(duration, 1) * trackWidth, trackWidth))
+                : max(0, min(progress * trackWidth, trackWidth))
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18))
+                    .frame(height: height)
+
+                Capsule()
+                    .fill(Color.primary)
+                    .frame(width: progressWidth, height: height)
+            }
+            .frame(maxHeight: .infinity, alignment: .center)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        isDraggingSlider = true
+                        let locationX = gesture.location.x
+                        let percentage = max(0, min(locationX / trackWidth, 1.0))
+                        dragValue = percentage * max(duration, 1)
+                    }
+                    .onEnded { gesture in
+                        let locationX = gesture.location.x
+                        let percentage = max(0, min(locationX / trackWidth, 1.0))
+                        let targetTime = percentage * max(duration, 1)
+                        viewModel.seek(to: Int(targetTime))
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            isDraggingSlider = false
+                        }
+                    }
+            )
+        }
+        .frame(height: isMac ? 14 : 12)
+    }
+}
+
+private struct LyricsPanelView: View {
+    @ObservedObject var timeKeeper: PlaybackTimeKeeper
+    @ObservedObject var viewModel: PlayerViewModel
+    let isFullScreen: Bool
+    let isFullScreenControlsHidden: Bool
+    let isFullScreenNowPlaying: Bool
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isUserScrollingLyrics = false
+    @State private var userScrollResumeTask: Task<Void, Never>? = nil
+
+    private var displayedTimeMs: Int {
+        return max(0, timeKeeper.currentTimeMs + viewModel.lyricOffsetMs)
+    }
+
+    private var hasRomanization: Bool {
+        viewModel.lines.contains { $0.romanization != nil }
+    }
+
+    private var hasTranslations: Bool {
+        viewModel.lines.contains { $0.translation != nil }
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            VStack(alignment: .leading, spacing: 0) {
+                if !(isFullScreen && isFullScreenControlsHidden) {
+                    HStack(spacing: 8) {
+                        if hasRomanization {
+                            Toggle(isOn: $viewModel.isRomanizationEnabled) {
+                                Text("Romaji")
+                                    .font(.system(size: isMac ? 15 : 13, weight: .semibold))
+                            }
+                            .toggleStyle(.button)
+                            .tint(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18))
+                        }
+
+                        if hasTranslations {
+                            Toggle(isOn: $viewModel.isTranslationEnabled) {
+                                Text("Translation")
+                                    .font(.system(size: isMac ? 15 : 13, weight: .semibold))
+                            }
+                            .toggleStyle(.button)
+                            .tint(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18))
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 8)
+                }
+
+                ScrollView(showsIndicators: false) {
+                    let lyricLines: [LyricLine] = viewModel.lines.filter { !$0.isSongwriter }
+                    let activeID: UUID? = viewModel.activeLineID(for: displayedTimeMs)
+                    let activeIndex: Int = lyricLines.firstIndex { $0.id == activeID } ?? -1
+
+                    VStack(spacing: 0) {
+                        if viewModel.isLoadingLyrics {
+                            VStack(spacing: 12) {
+                                ProgressView()
+                                    .tint(.primary)
+                                Text("Fetching lyrics from Spicy Lyrics...")
+                                    .font(.system(size: isMac ? 17 : 15, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 80)
+                        } else if viewModel.lines.isEmpty {
+                            Spacer(minLength: 0)
+                        } else {
+                            ForEach(Array(lyricLines.enumerated()), id: \.element.id) { index, line in
+                                lyricLineRow(
+                                    line: line,
+                                    index: index,
+                                    activeID: activeID,
+                                    activeIndex: activeIndex
+                                )
+                            }
+
+                            SpicyLyricsAttributionFooterView(
+                                source: viewModel.lyricsSource,
+                                attribution: viewModel.lyricsAttribution,
+                                songwriters: viewModel.lyricsSongwriters
+                            )
+                            .padding(.top, 36)
+                            .padding(.bottom, 64)
+                        }
+                    }
+                    .padding(.top, isFullScreen ? 64 : 52)
+                    .padding(.bottom, 36)
+                    .animation(.spring(response: 0.52, dampingFraction: 0.88), value: activeID)
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 4)
+                        .onChanged { _ in
+                            isUserScrollingLyrics = true
+                            userScrollResumeTask?.cancel()
+                            userScrollResumeTask = Task {
+                                try? await Task.sleep(nanoseconds: 4_500_000_000)
+                                if !Task.isCancelled {
+                                    await MainActor.run {
+                                        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                                            isUserScrollingLyrics = false
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                )
+                .scrollClipDisabled()
+            }
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.025),
+                        .init(color: .black, location: 0.94),
+                        .init(color: .clear, location: 1)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                Group {
+                    if !isFullScreen {
+                        RoundedRectangle(cornerRadius: 30, style: .continuous)
+                            .fill(colorScheme == .light ? Color.black.opacity(0.03) : Color.white.opacity(0.08))
+                    }
+                }
+            )
+            .overlay(
+                Group {
+                    if !isFullScreen {
+                        RoundedRectangle(cornerRadius: 30, style: .continuous)
+                            .stroke(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.08), lineWidth: 1)
+                    }
+                }
+            )
+            .overlay(alignment: .bottom) {
+                if isUserScrollingLyrics && !viewModel.isCurrentSongUnsynced, let activeID = viewModel.activeLineID(for: displayedTimeMs) {
+                    Button {
+                        userScrollResumeTask?.cancel()
+                        withAnimation(.spring(response: 0.52, dampingFraction: 0.88)) {
+                            isUserScrollingLyrics = false
+                            proxy.scrollTo(activeID, anchor: lyricsScrollAnchor(for: activeID))
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.uturn.backward.circle.fill")
+                                .font(.system(size: isMac ? 15 : 13, weight: .bold))
+                            Text("Center")
+                                .font(.system(size: isMac ? 14 : 12, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .overlay(Capsule().stroke(colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18), lineWidth: 1))
+                        .shadow(color: Color.black.opacity(colorScheme == .light ? 0.12 : 0.3), radius: 8, y: 4)
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .padding(.bottom, 12)
+                }
+            }
+            .onChange(of: viewModel.activeLineID(for: displayedTimeMs), initial: false) { _, activeID in
+                guard let activeID = activeID else {
+                    return
+                }
+
+                if !isUserScrollingLyrics {
+                    withAnimation(.spring(response: 0.52, dampingFraction: 0.88)) {
+                        proxy.scrollTo(activeID, anchor: lyricsScrollAnchor(for: activeID))
+                    }
+                }
+            }
+            .onChange(of: viewModel.currentTrackId) { _, _ in
+                isUserScrollingLyrics = false
+                userScrollResumeTask?.cancel()
+                Task { @MainActor in
+                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? viewModel.lines.first?.id {
+                        proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
+                    }
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? viewModel.lines.first?.id {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                            proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
+                        }
+                    }
+                }
+            }
+            .onChange(of: viewModel.lines.map(\.id)) { _, newIds in
+                isUserScrollingLyrics = false
+                guard !newIds.isEmpty else { return }
+                Task { @MainActor in
+                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? newIds.first {
+                        proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
+                    }
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                    if let targetID = viewModel.activeLineID(for: displayedTimeMs) ?? newIds.first {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                            proxy.scrollTo(targetID, anchor: lyricsScrollAnchor(for: targetID))
+                        }
+                    }
+                }
+            }
+            .onAppear {
+                isUserScrollingLyrics = false
+                Task { @MainActor in
+                    if let activeID = viewModel.activeLineID(for: displayedTimeMs) ?? viewModel.lines.first?.id {
+                        proxy.scrollTo(activeID, anchor: lyricsScrollAnchor(for: activeID))
+                    }
+                }
+            }
+        }
+    }
+
+    private func lyricsScrollAnchor(for lineID: UUID?) -> UnitPoint {
+        guard let lineID = lineID else { return .center }
+        let visibleLines = viewModel.lines.filter { !$0.isSongwriter }
+        guard let index = visibleLines.firstIndex(where: { $0.id == lineID }) else {
+            return .center
+        }
+        if index == 0 {
+            return UnitPoint(x: 0.5, y: isFullScreenNowPlaying ? 0.28 : 0.24)
+        } else if index == 1 {
+            return UnitPoint(x: 0.5, y: isFullScreenNowPlaying ? 0.32 : 0.36)
+        } else {
+            return .center
+        }
+    }
+
+    @ViewBuilder
+    private func lyricLineRow(
+        line: LyricLine,
+        index: Int,
+        activeID: UUID?,
+        activeIndex: Int
+    ) -> some View {
+        let effectiveEnd: Int = max(line.endMs, line.words.last?.endMs ?? line.startMs)
+        let isTimeActive: Bool = (line.startMs <= displayedTimeMs && displayedTimeMs <= effectiveEnd)
+        let isPast: Bool = (displayedTimeMs > effectiveEnd)
+        let isActive: Bool = isTimeActive || (line.id == activeID && !isPast)
+        let distance: Int = activeIndex >= 0 ? (index - activeIndex) : 0
+        let lineTimeMs: Int = (isActive || line.isInterlude) ? displayedTimeMs : (isPast ? line.endMs : 0)
+        let lineColor: Color = viewModel.colorForLine(index: index, agent: line.agent, oppositeAligned: line.oppositeAligned, colorScheme: colorScheme)
+
+        SpicyLyricLineView(
+            line: line,
+            currentTimeMs: lineTimeMs,
+            isLineActive: isActive,
+            isLinePast: isPast,
+            distance: distance,
+            isRomanizationEnabled: viewModel.isRomanizationEnabled,
+            isTranslationEnabled: viewModel.isTranslationEnabled,
+            isUserScrolling: isUserScrollingLyrics,
+            fontDesign: viewModel.lyricsFontDesign.fontDesign,
+            fontSize: viewModel.lyricsFontSize.leadSize,
+            isGlowEnabled: viewModel.isLyricsGlowEnabled,
+            isBounceEnabled: viewModel.isLyricsBounceEnabled,
+            activeColor: lineColor,
+            isExactColorEnabled: viewModel.isExactColorEnabled,
+            isSongUnsynced: viewModel.isCurrentSongUnsynced,
+            onSeek: { seekMs in
+                userScrollResumeTask?.cancel()
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                    isUserScrollingLyrics = false
+                }
+                viewModel.seek(to: seekMs)
+            }
+        )
+        .equatable()
+        .id(line.id)
+    }
+}
+
 
 

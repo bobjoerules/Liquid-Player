@@ -31,10 +31,14 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
 
     var vocalUnits: [VocalUnit] = []
     var songwriters: [String] = []
+    var source: String? = nil
+    var uploader: SpicyAttributionUser? = nil
+    var maker: SpicyAttributionUser? = nil
     var error: Error?
 
     private var defaultAgent: String?
     private var inSongwriter = false
+    private var inSource = false
     private var currentParagraph: ParagraphState?
 
     func result() -> ParsedLyrics {
@@ -43,8 +47,13 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
         // Final verification: if fewer than 2 lines have word sync in the entire song (and song has >= 2 lines),
         // treat the whole song as line-synced to prevent false karaoke animation.
         let allVocalLines = units.flatMap(\.allLines)
+        let hasAnyTiming = allVocalLines.contains { $0.startMs > 0 || ($0.lineEndMs ?? 0) > 0 || $0.isWordSynced }
+        let isStatic = !hasAnyTiming && !allVocalLines.isEmpty
+
+        // Final verification: if fewer than 2 lines have word sync in the entire song (and song has >= 2 lines),
+        // treat the whole song as line-synced to prevent false karaoke animation.
         let wordSyncedCount = allVocalLines.filter { $0.isWordSynced && !$0.words.isEmpty && !$0.isSongwriter && !$0.isInterlude }.count
-        if wordSyncedCount < 2 && allVocalLines.count >= 2 {
+        if isStatic || (wordSyncedCount < 2 && allVocalLines.count >= 2) {
             let makeLineSynced: (LyricLine) -> LyricLine = { line in
                 if line.isSongwriter || line.isInterlude { return line }
                 return LyricLine(
@@ -60,7 +69,8 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
                     interludeEndMs: -1,
                     translation: line.translation,
                     romanization: line.romanization,
-                    rawText: line.displayText
+                    rawText: line.displayText,
+                    isStatic: isStatic || line.isStatic
                 )
             }
 
@@ -132,12 +142,14 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
             }
         }
 
-        units.sort { $0.startMs < $1.startMs }
+        if !isStatic {
+            units.sort { $0.startMs < $1.startMs }
+        }
 
         var allLines: [LyricLine] = []
 
-        // 1. Intro interlude
-        if let first = units.first, first.startMs >= 3000 {
+        // 1. Intro interlude (only for timed synced songs)
+        if !isStatic, let first = units.first, first.startMs >= 3000 {
             let dotWords = createInterludeDotWords(startMs: 0, endMs: first.startMs)
             let lead = first.leadLines.first
             allLines.append(
@@ -164,7 +176,7 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
             // lead line first, followed immediately by its background vocals!
             allLines.append(contentsOf: unit.allLines)
 
-            if index < units.count - 1 {
+            if !isStatic, index < units.count - 1 {
                 let nextUnit = units[index + 1]
                 let gapStart = unit.endMs  // All vocals in current unit (lead + bg) have finished!
                 let gapEnd = nextUnit.startMs // Next vocal unit starts!
@@ -221,7 +233,8 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
             )
         }
 
-        return ParsedLyrics(lines: allLines, songwriters: songwriters)
+        let attribution: SpicyUploadAttribution? = (uploader != nil || maker != nil) ? SpicyUploadAttribution(uploader: uploader, maker: maker) : nil
+        return ParsedLyrics(lines: allLines, songwriters: songwriters, source: source, attribution: attribution, isStatic: isStatic)
     }
 
     func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
@@ -240,6 +253,22 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
         switch name {
         case "songwriter":
             inSongwriter = true
+        case "source":
+            inSource = true
+        case "uploader":
+            uploader = SpicyAttributionUser(
+                id: attributeDict["id"],
+                username: attributeDict["username"],
+                avatar: attributeDict["avatar"],
+                url: attributeDict["url"]
+            )
+        case "maker":
+            maker = SpicyAttributionUser(
+                id: attributeDict["id"],
+                username: attributeDict["username"],
+                avatar: attributeDict["avatar"],
+                url: attributeDict["url"]
+            )
         case "agent":
             let identifier = attributeDict["xml:id"] ?? attributeDict["id"]
             if identifier == "v1" || identifier == "1" {
@@ -270,6 +299,14 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if inSource {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                source = (source != nil ? "\(source!) " : "") + trimmed
+            }
+            return
+        }
+
         if inSongwriter {
             let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
@@ -290,6 +327,8 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
         let name = normalizedName(elementName, qName)
 
         switch name {
+        case "source":
+            inSource = false
         case "songwriter":
             inSongwriter = false
         case "span":
@@ -336,8 +375,8 @@ private struct ParagraphState {
     private var currentTranslation = ""
     private var currentRomanization = ""
     private var stack: [ParserDelegate.SpanContext]
-    private var previousEndedMidWord = false
-    private var backgroundPreviousEndedMidWord = false
+    private var leadHadWhitespace = true
+    private var backgroundHadWhitespace = true
     private var pendingText = ""
 
     init(beginMs: Int, endMs: Int, agent: String?, defaultAgent: String?) {
@@ -364,7 +403,7 @@ private struct ParagraphState {
 
         if isBackground && currentBackgroundDraft == nil {
             currentBackgroundDraft = LineDraft()
-            backgroundPreviousEndedMidWord = false
+            backgroundHadWhitespace = true
         }
 
         inBackgroundSpan = isBackground
@@ -385,6 +424,7 @@ private struct ParagraphState {
             }
             self.currentBackgroundDraft = nil
             inBackgroundSpan = false
+            backgroundHadWhitespace = true
         } else {
             inBackgroundSpan = nextIsBackground
         }
@@ -398,14 +438,14 @@ private struct ParagraphState {
                 backgroundGroups.append(currentBackgroundDraft)
                 self.currentBackgroundDraft = LineDraft()
             }
-            backgroundPreviousEndedMidWord = false
+            backgroundHadWhitespace = true
             return
         }
 
         if let currentLine = leadLines.last, (!currentLine.words.isEmpty || !currentLine.rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
             leadLines.append(LineDraft())
         }
-        previousEndedMidWord = false
+        leadHadWhitespace = true
     }
 
     mutating func appendText(_ rawText: String) {
@@ -459,6 +499,13 @@ private struct ParagraphState {
         }
 
         if rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if !rawText.contains("\n") && !rawText.contains("\r") && rawText.contains(where: \.isWhitespace) {
+                if isBackgroundToken {
+                    backgroundHadWhitespace = true
+                } else {
+                    leadHadWhitespace = true
+                }
+            }
             return
         }
 
@@ -466,10 +513,26 @@ private struct ParagraphState {
         // If the span or paragraph does not have word-level timestamps, do NOT fake words
         // by dividing paragraph duration by word count.
         guard context.hasExplicitTiming else {
+            if !rawText.contains("\n") && !rawText.contains("\r") && rawText.contains(where: \.isWhitespace) {
+                if isBackgroundToken {
+                    backgroundHadWhitespace = true
+                } else {
+                    leadHadWhitespace = true
+                }
+            }
             return
         }
 
+        let startsWithSpace = rawText.first?.isWhitespace == true
         let endsWithSpace = rawText.last?.isWhitespace == true
+        if startsWithSpace {
+            if isBackgroundToken {
+                backgroundHadWhitespace = true
+            } else {
+                leadHadWhitespace = true
+            }
+        }
+
         var trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if isBackgroundToken {
@@ -478,6 +541,13 @@ private struct ParagraphState {
         }
 
         if trimmed.isEmpty {
+            if endsWithSpace {
+                if isBackgroundToken {
+                    backgroundHadWhitespace = true
+                } else {
+                    leadHadWhitespace = true
+                }
+            }
             return
         }
 
@@ -486,16 +556,28 @@ private struct ParagraphState {
             .map(String.init)
             .filter { !$0.isEmpty }
 
-        var wordsToAdd: [(String, Bool)] = []
+        var wordsToAdd: [(String, Bool, Bool)] = []
         for (tokenIndex, token) in spaceTokens.enumerated() {
             let subTokens = splitKeepingTrailingHyphen(token)
             for (subIndex, subToken) in subTokens.enumerated() {
                 let isLastSub = subIndex == subTokens.count - 1
+                let isFirstSub = subIndex == 0
+                let isFirstToken = tokenIndex == 0
                 let isLastToken = tokenIndex == spaceTokens.count - 1
 
+                let hadWhitespaceBefore: Bool
+                if !isFirstSub {
+                    hadWhitespaceBefore = false
+                } else if isFirstToken {
+                    hadWhitespaceBefore = isBackgroundToken ? backgroundHadWhitespace : leadHadWhitespace
+                } else {
+                    hadWhitespaceBefore = true
+                }
+
+                let endsWithHyphen = subToken.hasSuffix("-") || subToken.hasSuffix("–") || subToken.hasSuffix("—")
                 let isPartOfWord: Bool
-                if !isLastSub {
-                    // Ends with hyphen or split mid-token: continues into next syllable
+                if !isLastSub || endsWithHyphen {
+                    // Split mid-token or ends with hyphen: continues into next syllable
                     isPartOfWord = true
                 } else if !isLastToken {
                     // Followed by whitespace within the same span: completes word
@@ -504,7 +586,8 @@ private struct ParagraphState {
                     // Last token in the span: continues if the span does NOT end with whitespace
                     isPartOfWord = !endsWithSpace
                 }
-                wordsToAdd.append((subToken, isPartOfWord))
+
+                wordsToAdd.append((subToken, isPartOfWord, hadWhitespaceBefore))
             }
         }
 
@@ -544,19 +627,72 @@ private struct ParagraphState {
                 letters: letters
             )
 
+            let hadWhitespaceBefore = entry.2
+
             if isBackgroundToken {
+                if !hadWhitespaceBefore, let bg = currentBackgroundDraft, !bg.words.isEmpty {
+                    let lastIdx = bg.words.count - 1
+                    let prev = bg.words[lastIdx]
+                    currentBackgroundDraft?.words[lastIdx] = LyricWord(
+                        text: prev.text,
+                        startMs: prev.startMs,
+                        endMs: prev.endMs,
+                        isPartOfWord: true,
+                        isLetterGroup: prev.isLetterGroup,
+                        letters: prev.letters
+                    )
+                } else if hadWhitespaceBefore, let bg = currentBackgroundDraft, !bg.words.isEmpty {
+                    let lastIdx = bg.words.count - 1
+                    let prev = bg.words[lastIdx]
+                    if !prev.text.hasSuffix("-") && !prev.text.hasSuffix("–") && !prev.text.hasSuffix("—") {
+                        currentBackgroundDraft?.words[lastIdx] = LyricWord(
+                            text: prev.text,
+                            startMs: prev.startMs,
+                            endMs: prev.endMs,
+                            isPartOfWord: false,
+                            isLetterGroup: prev.isLetterGroup,
+                            letters: prev.letters
+                        )
+                    }
+                }
                 currentBackgroundDraft?.words.append(word)
                 currentBackgroundDraft?.hasExplicitWordTiming = true
             } else {
-                leadLines[leadLines.count - 1].words.append(word)
-                leadLines[leadLines.count - 1].hasExplicitWordTiming = true
+                let lineIdx = leadLines.count - 1
+                if !hadWhitespaceBefore, lineIdx >= 0, !leadLines[lineIdx].words.isEmpty {
+                    let lastIdx = leadLines[lineIdx].words.count - 1
+                    let prev = leadLines[lineIdx].words[lastIdx]
+                    leadLines[lineIdx].words[lastIdx] = LyricWord(
+                        text: prev.text,
+                        startMs: prev.startMs,
+                        endMs: prev.endMs,
+                        isPartOfWord: true,
+                        isLetterGroup: prev.isLetterGroup,
+                        letters: prev.letters
+                    )
+                } else if hadWhitespaceBefore, lineIdx >= 0, !leadLines[lineIdx].words.isEmpty {
+                    let lastIdx = leadLines[lineIdx].words.count - 1
+                    let prev = leadLines[lineIdx].words[lastIdx]
+                    if !prev.text.hasSuffix("-") && !prev.text.hasSuffix("–") && !prev.text.hasSuffix("—") {
+                        leadLines[lineIdx].words[lastIdx] = LyricWord(
+                            text: prev.text,
+                            startMs: prev.startMs,
+                            endMs: prev.endMs,
+                            isPartOfWord: false,
+                            isLetterGroup: prev.isLetterGroup,
+                            letters: prev.letters
+                        )
+                    }
+                }
+                leadLines[lineIdx].words.append(word)
+                leadLines[lineIdx].hasExplicitWordTiming = true
             }
         }
 
         if isBackgroundToken {
-            backgroundPreviousEndedMidWord = !endsWithSpace
+            backgroundHadWhitespace = endsWithSpace
         } else {
-            previousEndedMidWord = !endsWithSpace
+            leadHadWhitespace = endsWithSpace
         }
     }
 
@@ -574,7 +710,18 @@ private struct ParagraphState {
                 continue
             }
 
-            let words = draft.words
+            var words = draft.words
+            if let lastIdx = words.indices.last, words[lastIdx].isPartOfWord {
+                let last = words[lastIdx]
+                words[lastIdx] = LyricWord(
+                    text: last.text,
+                    startMs: last.startMs,
+                    endMs: last.endMs,
+                    isPartOfWord: false,
+                    isLetterGroup: last.isLetterGroup,
+                    letters: last.letters
+                )
+            }
             let durations = words.map { $0.endMs - $0.startMs }
             let isArtificialDivision = words.count >= 3 && Set(durations).count == 1
             let distinctStarts = words.count > 1 ? Set(words.map(\.startMs)).count > 1 : true
@@ -582,24 +729,26 @@ private struct ParagraphState {
 
             let normalizedRaw = trimmedRaw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             let effectiveRawText = !normalizedRaw.isEmpty ? normalizedRaw : words.map(\.text).joined(separator: " ")
-            let lineStart = max(0, isWordSynced ? (words.first?.startMs ?? beginMs) : beginMs)
-            let lineEnd = max(lineStart + 500, isWordSynced ? (words.last?.endMs ?? endMs) : endMs)
+            let isInstrumental = isInstrumentalText(effectiveRawText)
+            let lineStart = max(0, (!isInstrumental && isWordSynced) ? (words.first?.startMs ?? beginMs) : beginMs)
+            let lineEnd = max(lineStart + 500, (!isInstrumental && isWordSynced) ? (words.last?.endMs ?? endMs) : endMs)
+            let interludeWords = isInstrumental ? createInterludeDotWords(startMs: lineStart, endMs: lineEnd) : (isWordSynced ? words : [])
 
             result.append(
                 LyricLine(
-                    words: isWordSynced ? words : [],
+                    words: interludeWords,
                     startMs: lineStart,
                     lineEndMs: lineEnd,
-                    isWordSynced: isWordSynced,
+                    isWordSynced: isInstrumental ? true : isWordSynced,
                     agent: lineAgent,
                     isBackground: false,
                     oppositeAligned: oppositeAligned,
                     isSongwriter: false,
-                    isInterlude: false,
-                    interludeEndMs: -1,
+                    isInterlude: isInstrumental,
+                    interludeEndMs: isInstrumental ? lineEnd : -1,
                     translation: currentTranslation.isEmpty ? nil : currentTranslation,
                     romanization: currentRomanization.isEmpty ? nil : currentRomanization,
-                    rawText: effectiveRawText
+                    rawText: isInstrumental ? "• • •" : effectiveRawText
                 )
             )
         }
@@ -618,7 +767,18 @@ private struct ParagraphState {
                 continue
             }
 
-            let words = draft.words
+            var words = draft.words
+            if let lastIdx = words.indices.last, words[lastIdx].isPartOfWord {
+                let last = words[lastIdx]
+                words[lastIdx] = LyricWord(
+                    text: last.text,
+                    startMs: last.startMs,
+                    endMs: last.endMs,
+                    isPartOfWord: false,
+                    isLetterGroup: last.isLetterGroup,
+                    letters: last.letters
+                )
+            }
             let durations = words.map { $0.endMs - $0.startMs }
             let isArtificialDivision = words.count >= 3 && Set(durations).count == 1
             let distinctStarts = words.count > 1 ? Set(words.map(\.startMs)).count > 1 : true
@@ -741,7 +901,9 @@ enum TTMLExporter {
         lines: [LyricLine],
         songwriters: [String] = [],
         title: String? = nil,
-        artist: String? = nil
+        artist: String? = nil,
+        source: String? = nil,
+        attribution: SpicyUploadAttribution? = nil
     ) -> String {
         var xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
         xml += "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\">\n"
@@ -752,6 +914,17 @@ enum TTMLExporter {
         }
         if let artist = artist, !artist.isEmpty {
             xml += "      <ttm:agent type=\"person\">\(xmlEscape(artist))</ttm:agent>\n"
+        }
+        if let source = source, !source.isEmpty {
+            xml += "      <source>\(xmlEscape(source))</source>\n"
+        }
+        if let attr = attribution {
+            if let uploader = attr.uploader {
+                xml += "      <uploader id=\"\(xmlEscape(uploader.id ?? ""))\" username=\"\(xmlEscape(uploader.username ?? ""))\" avatar=\"\(xmlEscape(uploader.avatar ?? ""))\" url=\"\(xmlEscape(uploader.url ?? ""))\" />\n"
+            }
+            if let maker = attr.maker {
+                xml += "      <maker id=\"\(xmlEscape(maker.id ?? ""))\" username=\"\(xmlEscape(maker.username ?? ""))\" avatar=\"\(xmlEscape(maker.avatar ?? ""))\" url=\"\(xmlEscape(maker.url ?? ""))\" />\n"
+            }
         }
         for songwriter in songwriters {
             xml += "      <songwriter>\(xmlEscape(songwriter))</songwriter>\n"
@@ -768,7 +941,12 @@ enum TTMLExporter {
             let agentAttr = line.agent.map { " agent=\"\(xmlEscape($0))\"" } ?? ""
             let backgroundAttr = line.isBackground ? " ttm:role=\"background\"" : ""
 
-            xml += "      <p begin=\"\(start)\" end=\"\(end)\"\(agentAttr)\(backgroundAttr)>\n"
+            let isStaticLine = line.isStatic || (line.startMs == 0 && (line.lineEndMs == nil || line.lineEndMs == 0))
+            if isStaticLine {
+                xml += "      <p\(agentAttr)\(backgroundAttr)>\n"
+            } else {
+                xml += "      <p begin=\"\(start)\" end=\"\(end)\"\(agentAttr)\(backgroundAttr)>\n"
+            }
 
             if line.isWordSynced && !line.words.isEmpty {
                 for (wIndex, word) in line.words.enumerated() {
@@ -807,7 +985,9 @@ enum TTMLExporter {
             lines: parsed.lines,
             songwriters: parsed.songwriters,
             title: title,
-            artist: artist
+            artist: artist,
+            source: parsed.source,
+            attribution: parsed.attribution
         )
     }
 

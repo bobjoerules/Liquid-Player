@@ -167,22 +167,43 @@ enum LyricsFontSize: String, CaseIterable, Identifiable, Codable {
     case small = "Compact"
     case medium = "Regular"
     case large = "Large"
+    case extraLarge = "Extra Large"
 
     var id: String { rawValue }
 
     var leadSize: CGFloat {
-        switch self {
-        case .small: return 24
-        case .medium: return 28
-        case .large: return 34
+        if isMacPlatform {
+            switch self {
+            case .small: return 32
+            case .medium: return 40
+            case .large: return 48
+            case .extraLarge: return 56
+            }
+        } else {
+            switch self {
+            case .small: return 24
+            case .medium: return 28
+            case .large: return 34
+            case .extraLarge: return 40
+            }
         }
     }
 
     var backgroundSize: CGFloat {
-        switch self {
-        case .small: return 18
-        case .medium: return 22
-        case .large: return 26
+        if isMacPlatform {
+            switch self {
+            case .small: return 24
+            case .medium: return 30
+            case .large: return 36
+            case .extraLarge: return 42
+            }
+        } else {
+            switch self {
+            case .small: return 18
+            case .medium: return 22
+            case .large: return 26
+            case .extraLarge: return 30
+            }
         }
     }
 }
@@ -192,11 +213,13 @@ enum ArtworkColorExtractor {
     struct ExtractedColors {
         let darkHex: String
         let lightHex: String
+        let paletteHexes: [String]
     }
 
     static func extractColors(from image: UIImage) -> ExtractedColors {
+        let defaultPalette = ["#38BDF8", "#818CF8", "#C084FC", "#F472B6"]
         guard let cgImage = image.cgImage else {
-            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7")
+            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7", paletteHexes: defaultPalette)
         }
 
         let sampleSize = 36
@@ -208,7 +231,7 @@ enum ArtworkColorExtractor {
         var rawData = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
 
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
-            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7")
+            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7", paletteHexes: defaultPalette)
         }
 
         guard let context = CGContext(
@@ -220,7 +243,7 @@ enum ArtworkColorExtractor {
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
         ) else {
-            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7")
+            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7", paletteHexes: defaultPalette)
         }
 
         context.interpolationQuality = .low
@@ -238,6 +261,7 @@ enum ArtworkColorExtractor {
         // 16 hue bins (22.5 degrees each)
         var hueBins = [ColorBucket](repeating: ColorBucket(), count: 16)
         var allPixelsBucket = ColorBucket()
+        var quadrantBuckets = [ColorBucket](repeating: ColorBucket(), count: 4)
 
         for y in 0..<height {
             for x in 0..<width {
@@ -253,6 +277,12 @@ enum ArtworkColorExtractor {
                 allPixelsBucket.totalG += g
                 allPixelsBucket.totalB += b
                 allPixelsBucket.count += 1
+
+                let qIdx = (y < height / 2 ? 0 : 2) + (x < width / 2 ? 0 : 1)
+                quadrantBuckets[qIdx].totalR += r
+                quadrantBuckets[qIdx].totalG += g
+                quadrantBuckets[qIdx].totalB += b
+                quadrantBuckets[qIdx].count += 1
 
                 let maxC = max(r, max(g, b))
                 let minC = min(r, min(g, b))
@@ -288,18 +318,46 @@ enum ArtworkColorExtractor {
             }
         }
 
-        var bestBucket: ColorBucket?
-        var highestScore: Double = -1.0
+        func uiColorToHex(_ color: UIColor) -> String {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
+                let ri = Int(lround(Double(r * 255.0)))
+                let gi = Int(lround(Double(g * 255.0)))
+                let bi = Int(lround(Double(b * 255.0)))
+                return String(format: "#%02X%02X%02X", ri, gi, bi)
+            }
+            return "#38BDF8"
+        }
 
-        for bucket in hueBins where bucket.count > 0 {
+        func hsbToHex(h: Double, s: Double, b: Double) -> String {
+            let color = UIColor(
+                hue: CGFloat(h / 360.0),
+                saturation: CGFloat(min(1.0, max(0.0, s))),
+                brightness: CGFloat(min(1.0, max(0.0, b))),
+                alpha: 1.0
+            )
+            return uiColorToHex(color)
+        }
+
+        struct ScoredBin {
+            let bin: ColorBucket
+            let score: Double
+            let hueDeg: Double
+            let avgSat: Double
+            let avgBright: Double
+        }
+
+        var scoredBins: [ScoredBin] = []
+        for (i, bucket) in hueBins.enumerated() where bucket.count > 0 {
             let avgSat = bucket.totalSat / Double(bucket.count)
             let avgBright = bucket.totalBright / Double(bucket.count)
-            let score = Double(bucket.count) * (avgSat * 1.5 + 0.3) * (avgBright > 0.3 ? 1.0 : 0.6)
-            if score > highestScore {
-                highestScore = score
-                bestBucket = bucket
-            }
+            let score = Double(bucket.count) * (avgSat * 1.5 + 0.3) * (avgBright > 0.25 ? 1.0 : 0.6)
+            let hueDeg = (Double(i) + 0.5) * (360.0 / 16.0)
+            scoredBins.append(ScoredBin(bin: bucket, score: score, hueDeg: hueDeg, avgSat: avgSat, avgBright: avgBright))
         }
+        scoredBins.sort { $0.score > $1.score }
+
+        let bestBucket = scoredBins.first?.bin
 
         let pickedR: Double
         let pickedG: Double
@@ -314,63 +372,132 @@ enum ArtworkColorExtractor {
             pickedG = allPixelsBucket.totalG / Double(allPixelsBucket.count)
             pickedB = allPixelsBucket.totalB / Double(allPixelsBucket.count)
         } else {
-            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7")
+            return ExtractedColors(darkHex: "#38BDF8", lightHex: "#0284C7", paletteHexes: defaultPalette)
         }
 
         let maxC = max(pickedR, max(pickedG, pickedB))
         let minC = min(pickedR, min(pickedG, pickedB))
         let delta = maxC - minC
-        var hue: Double = 0
+        var primaryHue: Double = 0
         if delta > 0.001 {
             if maxC == pickedR {
-                hue = (pickedG - pickedB) / delta
+                primaryHue = (pickedG - pickedB) / delta
             } else if maxC == pickedG {
-                hue = 2.0 + (pickedB - pickedR) / delta
+                primaryHue = 2.0 + (pickedB - pickedR) / delta
             } else {
-                hue = 4.0 + (pickedR - pickedG) / delta
+                primaryHue = 4.0 + (pickedR - pickedG) / delta
             }
-            hue *= 60.0
-            if hue < 0 { hue += 360.0 }
+            primaryHue *= 60.0
+            if primaryHue < 0 { primaryHue += 360.0 }
         }
         let sat = maxC > 0.001 ? delta / maxC : 0.0
         let bright = maxC
 
-        if sat < 0.12 {
-            return ExtractedColors(darkHex: "#FFFFFF", lightHex: "#1C1C1E")
+        if sat < 0.12 && scoredBins.isEmpty {
+            let monoPalette = ["#475569", "#64748B", "#94A3B8", "#CBD5E1"]
+            return ExtractedColors(
+                darkHex: "#FFFFFF",
+                lightHex: "#1C1C1E",
+                paletteHexes: monoPalette
+            )
         }
 
-        let darkSat = min(1.0, max(0.55, sat))
-        let darkBright = max(0.78, min(1.0, bright * 1.35))
-        let darkColor = UIColor(hue: CGFloat(hue / 360.0), saturation: CGFloat(darkSat), brightness: CGFloat(darkBright), alpha: 1.0)
+        let darkSat = min(1.0, max(0.60, sat * 1.15))
+        let darkBright = max(0.80, min(1.0, bright * 1.35))
+        let darkColor = UIColor(hue: CGFloat(primaryHue / 360.0), saturation: CGFloat(darkSat), brightness: CGFloat(darkBright), alpha: 1.0)
 
         let lightSat = min(1.0, max(0.70, sat))
         let lightBright = min(0.48, max(0.25, bright * 0.70))
-        let lightColor = UIColor(hue: CGFloat(hue / 360.0), saturation: CGFloat(lightSat), brightness: CGFloat(lightBright), alpha: 1.0)
+        let lightColor = UIColor(hue: CGFloat(primaryHue / 360.0), saturation: CGFloat(lightSat), brightness: CGFloat(lightBright), alpha: 1.0)
 
-        func uiColorToHex(_ color: UIColor) -> String {
-            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-            if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
-                let ri = Int(lround(Double(r * 255.0)))
-                let gi = Int(lround(Double(g * 255.0)))
-                let bi = Int(lround(Double(b * 255.0)))
-                return String(format: "#%02X%02X%02X", ri, gi, bi)
+        let dominantDarkHex = uiColorToHex(darkColor)
+        let dominantLightHex = uiColorToHex(lightColor)
+
+        // Build 4 diverse, high-vibrancy palette hexes
+        var paletteHexes: [String] = [dominantDarkHex]
+        var usedHues: [Double] = [primaryHue]
+
+        // Add top distinct scored hue bins
+        for scored in scoredBins {
+            if paletteHexes.count >= 4 { break }
+            let tooClose = usedHues.contains { abs($0 - scored.hueDeg) < 30.0 || abs($0 - scored.hueDeg) > 330.0 }
+            if !tooClose {
+                usedHues.append(scored.hueDeg)
+                let vSat = min(1.0, max(0.70, scored.avgSat * 1.35))
+                let vBright = min(1.0, max(0.75, scored.avgBright * 1.25))
+                paletteHexes.append(hsbToHex(h: scored.hueDeg, s: vSat, b: vBright))
             }
-            return "#38BDF8"
+        }
+
+        // If we still need more colors, sample quadrants
+        if paletteHexes.count < 4 {
+            for q in quadrantBuckets where q.count > 0 {
+                if paletteHexes.count >= 4 { break }
+                let qr = q.totalR / Double(q.count)
+                let qg = q.totalG / Double(q.count)
+                let qb = q.totalB / Double(q.count)
+                let qMax = max(qr, max(qg, qb))
+                let qMin = min(qr, min(qg, qb))
+                let qDelta = qMax - qMin
+                if qDelta > 0.08 {
+                    var qHue: Double = 0
+                    if qMax == qr {
+                        qHue = (qg - qb) / qDelta
+                    } else if qMax == qg {
+                        qHue = 2.0 + (qb - qr) / qDelta
+                    } else {
+                        qHue = 4.0 + (qr - qg) / qDelta
+                    }
+                    qHue *= 60.0
+                    if qHue < 0 { qHue += 360.0 }
+                    let tooClose = usedHues.contains { abs($0 - qHue) < 25.0 || abs($0 - qHue) > 335.0 }
+                    if !tooClose {
+                        usedHues.append(qHue)
+                        let qSat = min(1.0, max(0.68, (qDelta / qMax) * 1.35))
+                        let qBright = min(1.0, max(0.72, qMax * 1.25))
+                        paletteHexes.append(hsbToHex(h: qHue, s: qSat, b: qBright))
+                    }
+                }
+            }
+        }
+
+        // If still fewer than 4 (e.g. single-hue dominant album art), synthesize harmonic complementary variations
+        let harmonicOffsets = [36.0, 180.0, 324.0, 72.0, 240.0]
+        var hIdx = 0
+        while paletteHexes.count < 4 && hIdx < harmonicOffsets.count {
+            let offset = harmonicOffsets[hIdx]
+            hIdx += 1
+            let harmHue = (primaryHue + offset).truncatingRemainder(dividingBy: 360.0)
+            let harmSat = min(1.0, max(0.68, darkSat * 0.95))
+            let harmBright = min(1.0, max(0.75, darkBright * 0.95))
+            paletteHexes.append(hsbToHex(h: harmHue, s: harmSat, b: harmBright))
         }
 
         return ExtractedColors(
-            darkHex: uiColorToHex(darkColor),
-            lightHex: uiColorToHex(lightColor)
+            darkHex: dominantDarkHex,
+            lightHex: dominantLightHex,
+            paletteHexes: paletteHexes
         )
     }
 }
 #endif
 
 @MainActor
+final class PlaybackTimeKeeper: ObservableObject {
+    @Published var currentTimeMs: Int = 0
+}
+
+@MainActor
 final class PlayerViewModel: ObservableObject {
+    // MARK: - Dedicated Time Keeper (prevents 60 FPS redraw thrashing of parent views)
+    let timeKeeper = PlaybackTimeKeeper()
+    var currentTimeMs: Int {
+        get { timeKeeper.currentTimeMs }
+        set { timeKeeper.currentTimeMs = newValue }
+    }
+
     // MARK: - Published Properties
     @Published var lines: [LyricLine] = []
-    @Published var currentTimeMs: Int = 0
     @Published var durationMs: Int = 0
     @Published var isPlaying: Bool = false
     #if canImport(UIKit)
@@ -382,6 +509,11 @@ final class PlayerViewModel: ObservableObject {
     #endif
     @Published var artworkColorDarkHex: String = "#38BDF8"
     @Published var artworkColorLightHex: String = "#0284C7"
+    @Published var artworkPaletteHexes: [String] = ["#38BDF8", "#818CF8", "#C084FC", "#F472B6"]
+
+    var artworkPalette: [Color] {
+        artworkPaletteHexes.map { Color(hex: $0) }
+    }
     @Published var nowPlayingTitle: String = "No Track Playing"
     @Published var nowPlayingArtist: String = "Liquid Player"
     @Published var lyricsStatus: String = "Connect with Spotify to begin live playback."
@@ -392,6 +524,22 @@ final class PlayerViewModel: ObservableObject {
             UserDefaults.standard.set(lyricOffsetMs, forKey: "LiquidPlayeriOS.lyricOffsetMs")
         }
     }
+
+    // MARK: - Lyrics Sync Checker Engine State
+    struct SyncAuditState: Equatable {
+        var isAuditing: Bool = false
+        var lastDriftMs: Int = 0
+        var isLocked: Bool = true
+        var lastAuditTime: Date = Date()
+        var statusMessage: String = "In Sync"
+    }
+
+    @Published var syncAudit = SyncAuditState()
+    @Published var isAutoSyncCheckerEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayer.isAutoSyncCheckerEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(isAutoSyncCheckerEnabled, forKey: "LiquidPlayer.isAutoSyncCheckerEnabled")
+        }
+    }
     @Published var isShuffleEnabled: Bool = false
     @Published var isSpeaker: Bool = true
     @Published var authorMetadata: String = "Liquid Player"
@@ -400,6 +548,29 @@ final class PlayerViewModel: ObservableObject {
     @Published var lyricsSongwriters: [String] = []
     @Published var currentTrackId: String?
     @Published var favoriteTrackIDs: Set<String> = []
+
+    var displayTrackTitle: String {
+        let title = nowPlayingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "No Track Playing" : title
+    }
+
+    var displayTrackArtist: String {
+        let artist = authorMetadata.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !artist.isEmpty { return artist }
+        let nowArtist = nowPlayingArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !nowArtist.isEmpty { return nowArtist }
+        return "Liquid Player"
+    }
+
+    // Motion Artwork State
+    @Published var motionArtworkURL: URL? = nil
+    @Published var motionArtworkTallURL: URL? = nil
+    @Published var isMotionArtworkEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayer.isMotionArtworkEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(isMotionArtworkEnabled, forKey: "LiquidPlayer.isMotionArtworkEnabled")
+        }
+    }
+    @Published var isMotionArtworkLoading: Bool = false
 
     // Spotify & Search state
     @Published var spotifyService = SpotifyService()
@@ -463,6 +634,12 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
+    @Published var isExactColorEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isExactColorEnabled") as? Bool ?? false {
+        didSet {
+            UserDefaults.standard.set(isExactColorEnabled, forKey: "LiquidPlayeriOS.isExactColorEnabled")
+        }
+    }
+
     @Published var lyricsColorHex: String = UserDefaults.standard.string(forKey: "LiquidPlayeriOS.lyricsColorHex") ?? "#FFFFFF" {
         didSet {
             UserDefaults.standard.set(lyricsColorHex, forKey: "LiquidPlayeriOS.lyricsColorHex")
@@ -512,6 +689,7 @@ final class PlayerViewModel: ObservableObject {
         guard let image = image else {
             self.artworkColorDarkHex = "#38BDF8"
             self.artworkColorLightHex = "#0284C7"
+            self.artworkPaletteHexes = ["#38BDF8", "#818CF8", "#C084FC", "#F472B6"]
             return
         }
         Task.detached(priority: .userInitiated) {
@@ -519,6 +697,7 @@ final class PlayerViewModel: ObservableObject {
             await MainActor.run {
                 self.artworkColorDarkHex = colors.darkHex
                 self.artworkColorLightHex = colors.lightHex
+                self.artworkPaletteHexes = colors.paletteHexes
             }
         }
         #endif
@@ -575,7 +754,8 @@ final class PlayerViewModel: ObservableObject {
             return artworkColor(for: colorScheme)
         }
         let rawHex = voiceColors["v1"] ?? lyricsColorHex
-        return Color(hex: LyricColorPreset.resolveAdaptiveHex(rawHex, for: colorScheme))
+        let resolvedHex = LyricColorPreset.resolveAdaptiveHex(rawHex, for: colorScheme)
+        return Color(hex: resolvedHex)
     }
 
     var lyricsColor: Color {
@@ -633,7 +813,8 @@ final class PlayerViewModel: ObservableObject {
         }
 
         if let hex = voiceColors[key], !hex.isEmpty {
-            return Color(hex: LyricColorPreset.resolveAdaptiveHex(hex, for: colorScheme))
+            let resolvedHex = LyricColorPreset.resolveAdaptiveHex(hex, for: colorScheme)
+            return Color(hex: resolvedHex)
         }
 
         switch key {
@@ -685,6 +866,7 @@ final class PlayerViewModel: ObservableObject {
     private var seekLockoutUntil: Date = .distantPast
     private var seekTargetMs: Int = 0
     private var lastSystemMusicSyncTime: Date = .distantPast
+    private var lastAutoSyncCheckTime: Date = .distantPast
 
     init() {
         if let savedFavorites = UserDefaults.standard.stringArray(forKey: "LiquidPlayeriOS.favoriteTrackIDs") {
@@ -693,14 +875,14 @@ final class PlayerViewModel: ObservableObject {
         bindSpotifyService()
         startInterpolationTimer()
         setupNowPlayingRemoteCommands()
-        #if os(iOS)
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         setupSystemMusicObserver()
         #endif
     }
 
     deinit {
         interpolationTimer?.invalidate()
-        #if os(iOS)
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         MPMusicPlayerController.systemMusicPlayer.endGeneratingPlaybackNotifications()
         #endif
     }
@@ -743,6 +925,8 @@ final class PlayerViewModel: ObservableObject {
                     self.nowPlayingArtist = ""
                     self.authorMetadata = ""
                     self.artwork = nil
+                    self.motionArtworkURL = nil
+                    self.motionArtworkTallURL = nil
                     self.lines = []
                     self.isPlaying = false
                 }
@@ -797,25 +981,32 @@ final class PlayerViewModel: ObservableObject {
                     self.lastSyncProgressMs = progress
                     self.lastSyncTime = now
                     self.currentTimeMs = progress
+                    self.syncAudit.lastDriftMs = 0
+                    self.syncAudit.isLocked = true
+                    self.syncAudit.statusMessage = "Paused"
                 } else {
                     let elapsed = now.timeIntervalSince(self.lastSyncTime)
                     let currentInterpolated = self.lastSyncProgressMs + Int(elapsed * 1000.0)
                     let diff = progress - currentInterpolated
 
-                    if abs(diff) > 1800 {
+                    self.syncAudit.lastDriftMs = diff
+                    self.syncAudit.isLocked = abs(diff) < 45
+                    self.syncAudit.lastAuditTime = now
+                    self.syncAudit.statusMessage = abs(diff) < 45 ? "In Sync" : "Syncing (±\(abs(diff))ms)"
+
+                    if abs(diff) > 1200 {
                         // Large discrepancy (user seeked or track jumped): hard sync immediately
                         self.lastSyncProgressMs = progress
                         self.lastSyncTime = now
                         self.currentTimeMs = progress
-                    } else if abs(diff) > 20 {
-                        // Proportional slew: smoothly close 70% of drift per poll.
-                        // Eliminates 100-300ms drift in 1-2 polls (<2s) without jarring jumps.
-                        let correction = Int(Double(diff) * 0.70)
+                    } else if abs(diff) > 35 {
+                        // Symmetric bidirectional proportional slew: gently realign both positive and negative drift
+                        let correction = Int(Double(diff) * 0.80)
                         self.lastSyncProgressMs = currentInterpolated + correction
                         self.lastSyncTime = now
-                        self.currentTimeMs = max(self.currentTimeMs, self.lastSyncProgressMs)
+                        self.currentTimeMs = self.lastSyncProgressMs
                     } else {
-                        // Tightly locked within 20ms: lock to Spotify progress and re-anchor reference time
+                        // Tightly locked within 35ms: lock to Spotify progress and re-anchor reference time
                         self.lastSyncProgressMs = progress
                         self.lastSyncTime = now
                     }
@@ -871,6 +1062,35 @@ final class PlayerViewModel: ObservableObject {
         }
         #endif
 
+        // Fetch Apple Music motion album cover
+        self.motionArtworkURL = nil
+        self.motionArtworkTallURL = nil
+
+        if isMotionArtworkEnabled {
+            let trackName = track.name
+            let artistName = track.artistNames
+            let albumName = track.album?.name
+            let isrc = track.isrc
+            let targetTrackId = track.id
+
+            isMotionArtworkLoading = true
+            Task {
+                let motionResult = await AppleMusicMotionService.shared.fetchMotionArtwork(
+                    trackTitle: trackName,
+                    artistName: artistName,
+                    albumName: albumName,
+                    isrc: isrc
+                )
+                await MainActor.run {
+                    if self.currentTrackId == targetTrackId {
+                        self.isMotionArtworkLoading = false
+                        self.motionArtworkURL = motionResult?.squareVideoURL
+                        self.motionArtworkTallURL = motionResult?.tallVideoURL
+                    }
+                }
+            }
+        }
+
         if let trackId = track.id, trackId != currentLyricsTrackId {
             currentLyricsTrackId = trackId
             hasPrefetchedForCurrentTrackEnding = false
@@ -879,7 +1099,11 @@ final class PlayerViewModel: ObservableObject {
             if let cached = lyricsCache[trackId] {
                 self.lines = cached.lines
                 self.isLoadingLyrics = false
-                self.lyricsStatus = cached.lines.isEmpty ? "" : (cached.source ?? (cached.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics"))
+                if cached.isStatic {
+                    self.lyricsStatus = formattedStaticLyricsStatus(source: cached.source)
+                } else {
+                    self.lyricsStatus = cached.lines.isEmpty ? "" : (cached.source ?? (cached.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics"))
+                }
                 self.lyricsSource = cached.source
                 self.lyricsAttribution = cached.attribution
                 self.lyricsSongwriters = cached.songwriters
@@ -899,46 +1123,94 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
+    private func formattedStaticLyricsStatus(source: String?) -> String {
+        guard let src = source?.lowercased(), !src.isEmpty else { return "Lyrics" }
+        if src.contains("apple") { return "Lyrics provided by Apple Music" }
+        if src.contains("spotify") { return "Lyrics provided by Spotify" }
+        if src.contains("lrclib") { return "Lyrics provided by LRCLIB" }
+        if src.contains("spicy") { return "Lyrics from Spicy Lyrics" }
+        return "Lyrics provided by \(source ?? "provider")"
+    }
+
+    private func extractTTMLTitle(from xml: String) -> String? {
+        let pattern = #"<(?:\w+:)?title[^>]*>(.*?)</(?:\w+:)?title>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]),
+              let match = regex.firstMatch(in: xml, options: [], range: NSRange(location: 0, length: xml.utf16.count)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: xml) else {
+            return nil
+        }
+        return String(xml[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func fetchLyricsForTrack(trackId: String, trackTitle: String) async {
+        // 1. If memory cache already has a Spicy Lyrics sync, return immediately
         if let cached = lyricsCache[trackId] {
-            self.lines = cached.lines
-            self.isLoadingLyrics = false
-            self.lyricsStatus = cached.lines.isEmpty ? "" : (cached.source ?? (cached.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics"))
-            self.lyricsSource = cached.source
-            self.lyricsAttribution = cached.attribution
-            self.lyricsSongwriters = cached.songwriters
-            self.authorMetadata = nowPlayingArtist
-            LibraryManager.shared.saveLyrics(for: trackId, parsed: cached)
-            return
+            let isSpicySync = (cached.attribution != nil) || (cached.source?.lowercased().contains("spicy") == true)
+            if isSpicySync {
+                self.lines = cached.lines
+                self.isLoadingLyrics = false
+                if cached.isStatic {
+                    self.lyricsStatus = formattedStaticLyricsStatus(source: cached.source)
+                } else {
+                    let makerName = cached.attribution?.maker?.username ?? cached.attribution?.uploader?.username
+                    self.lyricsStatus = makerName.map { "Synced by \($0) (Spicy Lyrics)" } ?? (cached.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics")
+                }
+                self.lyricsSource = cached.source
+                self.lyricsAttribution = cached.attribution
+                self.lyricsSongwriters = cached.songwriters
+                self.authorMetadata = nowPlayingArtist
+                LibraryManager.shared.saveLyrics(for: trackId, parsed: cached)
+                return
+            }
         }
 
-        // Check if we have valid (under 30 days) saved TTML in the library
+        // 2. Check if we have valid (under 30 days) saved TTML in the library
+        var fallbackNonSpicySaved: ParsedLyrics? = nil
         if let validTTML = LibraryManager.shared.getValidSavedTTML(for: trackId),
            let parsed = try? TTMLLyricsParser.parse(data: Data(validTTML.utf8)),
            !parsed.lines.isEmpty {
-            self.lyricsCache[trackId] = parsed
-            self.lines = parsed.lines
-            self.isLoadingLyrics = false
-            self.lyricsStatus = parsed.hasWordSyncedLyrics ? "Loaded from Saved TTML" : "Line Synced with Saved TTML"
-            self.lyricsSource = parsed.source ?? "Spicy Lyrics (Saved)"
-            self.lyricsAttribution = parsed.attribution
-            self.lyricsSongwriters = parsed.songwriters
-            self.authorMetadata = nowPlayingArtist
-            return
+            // Validate that the saved TTML matches the requested track title (purging stale/mismatched caches)
+            if let ttmlTitle = extractTTMLTitle(from: validTTML), !TrackMatchUtils.titlesMatch(requested: trackTitle, candidate: ttmlTitle) {
+                LibraryManager.shared.deleteSong(id: trackId)
+            } else {
+                let isSpicySaved = (parsed.attribution != nil) || (parsed.source?.lowercased().contains("spicy") == true)
+                if isSpicySaved {
+                    self.lyricsCache[trackId] = parsed
+                    self.lines = parsed.lines
+                    self.isLoadingLyrics = false
+                    self.lyricsStatus = parsed.isStatic ? "Lyrics (Saved)" : (parsed.hasWordSyncedLyrics ? "Loaded from Saved TTML" : "Line Synced with Saved TTML")
+                    self.lyricsSource = parsed.source ?? "Spicy Lyrics (Saved)"
+                    self.lyricsAttribution = parsed.attribution
+                    self.lyricsSongwriters = parsed.songwriters
+                    self.authorMetadata = nowPlayingArtist
+                    return
+                } else {
+                    // Non-Spicy saved TTML (e.g. from Apple Music or LRCLIB):
+                    // Hold as fallback so live Spicy Lyrics syncs are queried first and take priority!
+                    fallbackNonSpicySaved = parsed
+                }
+            }
         }
 
         isLoadingLyrics = true
-        lyricsStatus = "Fetching synced lyrics..."
+        lyricsStatus = "Fetching lyrics..."
         errorMessage = nil
 
+        // 3. Primary Provider: Spicy Lyrics (ALWAYS prioritized above all other providers)
         do {
             let parsed = try await SpicyLyricsService.shared.fetchLyrics(for: trackId)
             if !parsed.lines.isEmpty {
                 self.lyricsCache[trackId] = parsed
                 self.lines = parsed.lines
                 self.isLoadingLyrics = false
-                self.lyricsStatus = parsed.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics"
-                self.lyricsSource = parsed.source
+                if parsed.isStatic {
+                    self.lyricsStatus = formattedStaticLyricsStatus(source: parsed.source)
+                } else {
+                    let makerName = parsed.attribution?.maker?.username ?? parsed.attribution?.uploader?.username
+                    self.lyricsStatus = makerName.map { "Synced by \($0) (Spicy Lyrics)" } ?? (parsed.hasWordSyncedLyrics ? "Synced with Spicy Lyrics" : "Line Synced with Spicy Lyrics")
+                }
+                self.lyricsSource = parsed.source ?? "Spicy Lyrics"
                 self.lyricsAttribution = parsed.attribution
                 self.lyricsSongwriters = parsed.songwriters
                 self.authorMetadata = nowPlayingArtist
@@ -946,7 +1218,69 @@ final class PlayerViewModel: ObservableObject {
                 return
             }
         } catch {
-            // Spicy Lyrics request failed
+            // Spicy Lyrics request failed, attempt fallbacks below
+        }
+
+        // 4. Use saved non-Spicy fallback if Spicy Lyrics had no lyrics
+        if let saved = fallbackNonSpicySaved {
+            self.lyricsCache[trackId] = saved
+            self.lines = saved.lines
+            self.isLoadingLyrics = false
+            self.lyricsStatus = saved.isStatic ? "Lyrics (Saved)" : (saved.hasWordSyncedLyrics ? "Loaded from Saved TTML" : "Line Synced with Saved TTML")
+            self.lyricsSource = saved.source
+            self.lyricsAttribution = saved.attribution
+            self.lyricsSongwriters = saved.songwriters
+            self.authorMetadata = nowPlayingArtist
+            return
+        }
+
+        let durationSec = durationMs > 0 ? (durationMs / 1000) : nil
+
+        // Secondary fallback provider: BiniLyrics (Apple Music TTML synced lyrics)
+        if let biniParsed = await BiniLyricsService.shared.fetchLyrics(
+            isrc: spotifyService.currentTrack?.isrc,
+            trackTitle: trackTitle,
+            artistName: nowPlayingArtist,
+            albumName: spotifyService.currentTrack?.album?.name,
+            durationSeconds: durationSec
+        ), !biniParsed.lines.isEmpty {
+            self.lyricsCache[trackId] = biniParsed
+            self.lines = biniParsed.lines
+            self.isLoadingLyrics = false
+            if biniParsed.isStatic {
+                self.lyricsStatus = "Lyrics provided by Apple Music"
+            } else {
+                self.lyricsStatus = biniParsed.hasWordSyncedLyrics ? "Synced with Apple Music (BiniLyrics)" : "Line Synced with Apple Music"
+            }
+            self.lyricsSource = biniParsed.source
+            self.lyricsAttribution = nil
+            self.lyricsSongwriters = biniParsed.songwriters
+            self.authorMetadata = nowPlayingArtist
+            LibraryManager.shared.saveLyrics(for: trackId, parsed: biniParsed)
+            return
+        }
+
+        // Tertiary fallback provider: LRCLIB (LRC synced or plain unsynced lyrics)
+        if let lrclibParsed = await LRCLIBService.shared.fetchLyrics(
+            trackTitle: trackTitle,
+            artistName: nowPlayingArtist,
+            albumName: spotifyService.currentTrack?.album?.name,
+            durationSeconds: durationSec
+        ), !lrclibParsed.lines.isEmpty {
+            self.lyricsCache[trackId] = lrclibParsed
+            self.lines = lrclibParsed.lines
+            self.isLoadingLyrics = false
+            if lrclibParsed.isStatic {
+                self.lyricsStatus = "Lyrics provided by LRCLIB"
+            } else {
+                self.lyricsStatus = "Line Synced with LRCLIB"
+            }
+            self.lyricsSource = lrclibParsed.source
+            self.lyricsAttribution = lrclibParsed.attribution
+            self.lyricsSongwriters = lrclibParsed.songwriters
+            self.authorMetadata = nowPlayingArtist
+            LibraryManager.shared.saveLyrics(for: trackId, parsed: lrclibParsed)
+            return
         }
 
         self.isLoadingLyrics = false
@@ -972,6 +1306,7 @@ final class PlayerViewModel: ObservableObject {
                     self.currentTrackId = song.id
                     self.nowPlayingTitle = song.name
                     self.nowPlayingArtist = song.artistNames
+                    self.authorMetadata = song.artistNames
                 }
                 await fetchLyricsForTrack(trackId: song.id, trackTitle: song.name)
             }
@@ -983,6 +1318,20 @@ final class PlayerViewModel: ObservableObject {
         guard !songs.isEmpty else { return }
         if let randomSong = songs.randomElement() {
             playLibrarySong(randomSong)
+        }
+    }
+
+    func deleteSavedTTML(for trackId: String) {
+        let cleanId = trackId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanId.isEmpty else { return }
+        LibraryManager.shared.deleteTTML(for: cleanId)
+        lyricsCache.removeValue(forKey: cleanId)
+        if currentTrackId == cleanId {
+            lines = []
+            lyricsStatus = "Saved TTML deleted"
+            lyricsSource = nil
+            lyricsAttribution = nil
+            lyricsSongwriters = []
         }
     }
 
@@ -1001,7 +1350,7 @@ final class PlayerViewModel: ObservableObject {
     private func handleInterpolationTick() {
         let now = Date()
 
-        #if os(iOS)
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         if now.timeIntervalSince(lastSystemMusicSyncTime) >= 0.25 {
             lastSystemMusicSyncTime = now
             syncWithSystemMusicActivityIfMatching(now: now)
@@ -1009,13 +1358,18 @@ final class PlayerViewModel: ObservableObject {
         #endif
 
         guard isPlaying else { return }
+
+        // Periodic auto-sync checker: audit sync health against Spotify every 3.5s
+        if isAutoSyncCheckerEnabled && now.timeIntervalSince(lastAutoSyncCheckTime) >= 3.5 {
+            lastAutoSyncCheckTime = now
+            Task { @MainActor [weak self] in
+                await self?.checkAndResyncLyrics(force: false)
+            }
+        }
+
         let elapsed = now.timeIntervalSince(lastSyncTime)
         let interpolated = lastSyncProgressMs + Int(elapsed * 1000.0)
-        if now >= seekLockoutUntil {
-            currentTimeMs = min(max(interpolated, currentTimeMs), durationMs)
-        } else {
-            currentTimeMs = min(interpolated, durationMs)
-        }
+        currentTimeMs = min(max(0, interpolated), durationMs)
 
         // When song enters its final 35 seconds, ensure upcoming track lyrics are pre-fetched
         if durationMs > 40_000,
@@ -1029,7 +1383,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     // MARK: - System Music Activity Sync
-    #if os(iOS)
+    #if os(iOS) && !targetEnvironment(macCatalyst)
     private func setupSystemMusicObserver() {
         let player = MPMusicPlayerController.systemMusicPlayer
         player.beginGeneratingPlaybackNotifications()
@@ -1202,47 +1556,127 @@ final class PlayerViewModel: ObservableObject {
         lyricOffsetMs = 0
     }
 
+    // MARK: - Lyrics Sync Checker Engine
+    func checkAndResyncLyrics(force: Bool = false) async {
+        syncAudit.isAuditing = true
+        defer { syncAudit.isAuditing = false }
+
+        await spotifyService.fetchPlaybackState()
+
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastSyncTime)
+        let interpolated = lastSyncProgressMs + Int(elapsed * 1000.0)
+        let currentSpotify = spotifyService.progressMs
+        let diff = currentSpotify - interpolated
+
+        if force || abs(diff) > 40 {
+            lastSyncProgressMs = currentSpotify
+            lastSyncTime = now
+            currentTimeMs = currentSpotify
+            syncAudit.lastDriftMs = 0
+            syncAudit.isLocked = true
+            syncAudit.statusMessage = "Resynced to \(timecode(currentSpotify))"
+        } else {
+            syncAudit.lastDriftMs = diff
+            syncAudit.isLocked = abs(diff) < 45
+            syncAudit.statusMessage = "In Sync (±\(abs(diff))ms)"
+        }
+        syncAudit.lastAuditTime = now
+    }
+
+    var isCurrentSongUnsynced: Bool {
+        guard !lines.isEmpty else { return false }
+        let nonSongwriterLines = lines.filter { !$0.isSongwriter }
+        guard !nonSongwriterLines.isEmpty else { return false }
+        return nonSongwriterLines.allSatisfy { $0.isStatic } || nonSongwriterLines.allSatisfy { $0.startMs == 0 && $0.endMs == 0 }
+    }
+
     func activeLineID() -> UUID? {
         activeLineID(for: currentTimeMs)
     }
 
     func activeLineID(for timeMs: Int) -> UUID? {
+        if isCurrentSongUnsynced {
+            return nil
+        }
         let nonSongwriterLines = lines.filter { !$0.isSongwriter }
         guard !nonSongwriterLines.isEmpty else { return nil }
 
+        // Helper to get effective range of sung content for a line
+        func lineTiming(_ line: LyricLine) -> (start: Int, wordsEnd: Int, effectiveEnd: Int) {
+            let start = line.startMs
+            let wordsEnd = line.words.last?.endMs ?? line.endMs
+            let effectiveEnd = max(line.endMs, wordsEnd)
+            return (start, wordsEnd, effectiveEnd)
+        }
+
         let leadCandidates = nonSongwriterLines.filter { !$0.isBackground }
 
-        // 1. Inside an active sung lead line or interlude (preferring the starting/active line)
-        if let current = leadCandidates.filter({ $0.startMs <= timeMs && timeMs < $0.endMs }).last {
-            return current.id
+        // Helper to pick the best active line from a list of overlapping lines that cover timeMs
+        func selectBestActiveLine(from candidates: [LyricLine]) -> LyricLine? {
+            guard !candidates.isEmpty else { return nil }
+            if candidates.count == 1 { return candidates[0] }
+
+            // 1. If any candidate line is ACTIVELY singing words right now, prefer the first such line in song order.
+            // This prevents prematurely skipping down to a line below when the line above is still singing its words!
+            for line in candidates {
+                let timing = lineTiming(line)
+                if !line.words.isEmpty {
+                    if timing.start <= timeMs && timeMs < timing.wordsEnd {
+                        return line
+                    }
+                }
+            }
+
+            // 2. For lines without words (line-synced), find the latest line that has started,
+            // but if multiple lines start at the exact same time, pick the first in song order.
+            let startedLines = candidates.filter { $0.startMs <= timeMs }
+            if let maxStart = startedLines.map(\.startMs).max() {
+                if let best = startedLines.first(where: { $0.startMs == maxStart }) {
+                    return best
+                }
+            }
+
+            // 3. Fallback: first candidate in song order
+            return candidates.first
         }
 
-        // 2. If no lead line is active, check if a background line is currently active
+        // 1. Lead lines covering timeMs
+        let activeLeads = leadCandidates.filter { line in
+            let timing = lineTiming(line)
+            return timing.start <= timeMs && timeMs < timing.effectiveEnd
+        }
+        if let chosen = selectBestActiveLine(from: activeLeads) {
+            return chosen.id
+        }
+
+        // 2. If no lead line covers timeMs, check background lines covering timeMs
         let bgCandidates = nonSongwriterLines.filter { $0.isBackground }
-        if let currentBg = bgCandidates.filter({ $0.startMs <= timeMs && timeMs < $0.endMs }).last {
-            return currentBg.id
+        let activeBgs = bgCandidates.filter { line in
+            let timing = lineTiming(line)
+            return timing.start <= timeMs && timeMs < timing.effectiveEnd
+        }
+        if let chosen = selectBestActiveLine(from: activeBgs) {
+            return chosen.id
         }
 
-        // 3. Exact boundary match on endMs fallback
-        if let current = nonSongwriterLines.filter({ $0.startMs <= timeMs && timeMs <= $0.endMs }).last {
-            return current.id
-        }
-
-        // 4. In between lines: stay on the line that was most recently active / playing
-        // (never rewind backwards to an earlier lead line when a background vocal just finished!)
-        if let mostRecent = nonSongwriterLines.filter({ $0.startMs <= timeMs }).max(by: {
-            if $0.endMs != $1.endMs {
-                return $0.endMs < $1.endMs
+        // 3. In between lines (or exact boundary): stay on the line that was most recently active / playing
+        let pastOrCurrent = nonSongwriterLines.filter { $0.startMs <= timeMs }
+        if let mostRecent = pastOrCurrent.max(by: { a, b in
+            let timingA = lineTiming(a)
+            let timingB = lineTiming(b)
+            if timingA.effectiveEnd != timingB.effectiveEnd {
+                return timingA.effectiveEnd < timingB.effectiveEnd
             }
-            if $0.isBackground != $1.isBackground {
-                return $0.isBackground && !$1.isBackground
+            if a.isBackground != b.isBackground {
+                return a.isBackground && !b.isBackground
             }
-            return $0.startMs < $1.startMs
+            return a.startMs < b.startMs
         }) {
             return mostRecent.id
         }
 
-        // 5. Fallback at or before start of song: guarantee the very first line of the song
+        // 4. Fallback before start of song: very first line
         return nonSongwriterLines.first?.id
     }
 
@@ -1326,6 +1760,8 @@ final class PlayerViewModel: ObservableObject {
                 await MainActor.run {
                     self.currentTrackId = cleanId
                     self.nowPlayingTitle = "Spotify Track (\(cleanId.prefix(6))...)"
+                    self.nowPlayingArtist = "Spotify"
+                    self.authorMetadata = "Spotify"
                 }
                 await fetchLyricsForTrack(trackId: cleanId, trackTitle: cleanId)
             }
@@ -1658,6 +2094,20 @@ final class LibraryManager: ObservableObject {
         songs.removeAll { $0.id == id }
         deleteTTMLFromDisk(for: id)
         saveSongs()
+    }
+
+    func deleteTTML(for trackId: String) {
+        let cleanId = trackId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanId.isEmpty else { return }
+        deleteTTMLFromDisk(for: cleanId)
+        if let index = songs.firstIndex(where: { $0.id == cleanId }) {
+            songs[index].ttmlContent = nil
+            songs[index].ttmlSavedAt = nil
+            songs[index].lyricsSource = nil
+            songs[index].hasNoLyrics = nil
+            songs[index].lastCheckedForLyricsAt = nil
+            saveSongs()
+        }
     }
 
     // MARK: - Persistence (file-based — NOT UserDefaults)

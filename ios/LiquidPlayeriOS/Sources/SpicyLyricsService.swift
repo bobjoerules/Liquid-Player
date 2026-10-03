@@ -2,9 +2,9 @@ import Foundation
 
 // MARK: - Spicy Lyrics API Decodable Models
 
-struct SpicyLyricsEnvelope: Codable {
+struct SpicyLyricsEnvelope: Decodable {
     let Body: SpicyLyricsBody?
-    let Status: Int
+    let Status: Int?
     let type: String?
 
     enum CodingKeys: String, CodingKey {
@@ -14,7 +14,7 @@ struct SpicyLyricsEnvelope: Codable {
     }
 }
 
-struct SpicyLyricsBody: Codable {
+struct SpicyLyricsBody: Decodable {
     let id: String?
     let source: String?
     let SongWriters: [String]?
@@ -23,16 +23,72 @@ struct SpicyLyricsBody: Codable {
     let EndTime: Double?
     let Content: [SpicyContentLine]?
     let UploadAttribution: SpicyUploadAttributionDTO?
+    let plainLyrics: String?
+    let text: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case source
         case SongWriters
+        case songWritersLower = "songwriters"
         case type = "Type"
+        case typeLower = "type"
         case StartTime
         case EndTime
         case Content
+        case contentLower = "content"
+        case Lines
+        case linesLower = "lines"
         case UploadAttribution
+        case plainLyrics
+        case text
+        case lyrics
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try? container.decodeIfPresent(String.self, forKey: .id)
+        self.source = try? container.decodeIfPresent(String.self, forKey: .source)
+        self.SongWriters = (try? container.decodeIfPresent([String].self, forKey: .SongWriters)) ??
+                          (try? container.decodeIfPresent([String].self, forKey: .songWritersLower))
+        self.type = (try? container.decodeIfPresent(String.self, forKey: .type)) ??
+                    (try? container.decodeIfPresent(String.self, forKey: .typeLower))
+        self.StartTime = try? container.decodeIfPresent(Double.self, forKey: .StartTime)
+        self.EndTime = try? container.decodeIfPresent(Double.self, forKey: .EndTime)
+        self.UploadAttribution = try? container.decodeIfPresent(SpicyUploadAttributionDTO.self, forKey: .UploadAttribution)
+        self.plainLyrics = (try? container.decodeIfPresent(String.self, forKey: .plainLyrics)) ??
+                           (try? container.decodeIfPresent(String.self, forKey: .lyrics))
+        self.text = try? container.decodeIfPresent(String.self, forKey: .text)
+
+        if let lines = try? container.decodeIfPresent([SpicyContentLine].self, forKey: .Content) {
+            self.Content = lines
+        } else if let lines = try? container.decodeIfPresent([SpicyContentLine].self, forKey: .Lines) {
+            self.Content = lines
+        } else if let lines = try? container.decodeIfPresent([SpicyContentLine].self, forKey: .linesLower) {
+            self.Content = lines
+        } else if let lines = try? container.decodeIfPresent([SpicyContentLine].self, forKey: .contentLower) {
+            self.Content = lines
+        } else if let stringArray = (try? container.decodeIfPresent([String].self, forKey: .Content)) ??
+                                    (try? container.decodeIfPresent([String].self, forKey: .Lines)) ??
+                                    (try? container.decodeIfPresent([String].self, forKey: .linesLower)) ??
+                                    (try? container.decodeIfPresent([String].self, forKey: .contentLower)) {
+            self.Content = stringArray.map { SpicyContentLine(text: $0) }
+        } else if let singleString = (try? container.decodeIfPresent(String.self, forKey: .Content)) ??
+                                     (try? container.decodeIfPresent(String.self, forKey: .Lines)) ??
+                                     (try? container.decodeIfPresent(String.self, forKey: .linesLower)) ??
+                                     (try? container.decodeIfPresent(String.self, forKey: .contentLower)) {
+            self.Content = singleString.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .map { SpicyContentLine(text: $0) }
+        } else if let fallbackText = self.plainLyrics ?? self.text {
+            self.Content = fallbackText.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .map { SpicyContentLine(text: $0) }
+        } else {
+            self.Content = nil
+        }
     }
 }
 
@@ -49,7 +105,7 @@ struct SpicyAttributionUserDTO: Codable {
     let url: String?
 }
 
-struct SpicyContentLine: Codable {
+struct SpicyContentLine: Decodable {
     let type: String?
     let OppositeAligned: Bool?
     let agent: String?
@@ -63,6 +119,45 @@ struct SpicyContentLine: Codable {
     let TransliteratedText: String?
     let TranslatedText: String?
 
+    init(
+        type: String? = "Line",
+        OppositeAligned: Bool? = false,
+        agent: String? = nil,
+        Lead: SpicyVocalGroup? = nil,
+        Background: [SpicyVocalGroup]? = nil,
+        StartTime: Double? = nil,
+        EndTime: Double? = nil,
+        Text: String? = nil,
+        TransliteratedText: String? = nil,
+        TranslatedText: String? = nil
+    ) {
+        self.type = type
+        self.OppositeAligned = OppositeAligned
+        self.agent = agent
+        self.Lead = Lead
+        self.Background = Background
+        self.StartTime = StartTime
+        self.EndTime = EndTime
+        self.Text = Text
+        self.TransliteratedText = TransliteratedText
+        self.TranslatedText = TranslatedText
+    }
+
+    init(text: String) {
+        self.init(
+            type: "Line",
+            OppositeAligned: false,
+            agent: nil,
+            Lead: nil,
+            Background: nil,
+            StartTime: nil,
+            EndTime: nil,
+            Text: text,
+            TransliteratedText: nil,
+            TranslatedText: nil
+        )
+    }
+
     enum CodingKeys: String, CodingKey {
         case type = "Type"
         case OppositeAligned
@@ -72,8 +167,46 @@ struct SpicyContentLine: Codable {
         case StartTime
         case EndTime
         case Text
+        case textLower = "text"
         case TransliteratedText
+        case transliteratedTextLower = "transliteratedText"
         case TranslatedText
+        case translatedTextLower = "translatedText"
+    }
+
+    init(from decoder: Decoder) throws {
+        if let singleString = try? decoder.singleValueContainer().decode(String.self) {
+            self.init(text: singleString)
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try? container.decodeIfPresent(String.self, forKey: .type)
+        let OppositeAligned = try? container.decodeIfPresent(Bool.self, forKey: .OppositeAligned)
+        let agent = try? container.decodeIfPresent(String.self, forKey: .agent)
+        let Lead = try? container.decodeIfPresent(SpicyVocalGroup.self, forKey: .Lead)
+        let Background = try? container.decodeIfPresent([SpicyVocalGroup].self, forKey: .Background)
+        let StartTime = try? container.decodeIfPresent(Double.self, forKey: .StartTime)
+        let EndTime = try? container.decodeIfPresent(Double.self, forKey: .EndTime)
+        let Text = (try? container.decodeIfPresent(String.self, forKey: .Text)) ??
+                    (try? container.decodeIfPresent(String.self, forKey: .textLower))
+        let TransliteratedText = (try? container.decodeIfPresent(String.self, forKey: .TransliteratedText)) ??
+                                 (try? container.decodeIfPresent(String.self, forKey: .transliteratedTextLower))
+        let TranslatedText = (try? container.decodeIfPresent(String.self, forKey: .TranslatedText)) ??
+                             (try? container.decodeIfPresent(String.self, forKey: .translatedTextLower))
+
+        self.init(
+            type: type,
+            OppositeAligned: OppositeAligned,
+            agent: agent,
+            Lead: Lead,
+            Background: Background,
+            StartTime: StartTime,
+            EndTime: EndTime,
+            Text: Text,
+            TransliteratedText: TransliteratedText,
+            TranslatedText: TranslatedText
+        )
     }
 }
 
@@ -191,8 +324,9 @@ actor SpicyLyricsService {
         let songwriters = body.SongWriters ?? []
         var vocalUnits: [VocalUnit] = []
 
-        let isSongLineSynced = (body.type?.caseInsensitiveCompare("Line") == .orderedSame) ||
-                               (body.type?.caseInsensitiveCompare("Static") == .orderedSame)
+        let isStatic = (body.type?.caseInsensitiveCompare("Static") == .orderedSame) ||
+                       (body.type == nil && (body.Content?.allSatisfy { ($0.StartTime == nil || $0.StartTime == 0) && ($0.EndTime == nil || $0.EndTime == 0) && $0.Lead == nil } ?? false))
+        let isSongLineSynced = isStatic || (body.type?.caseInsensitiveCompare("Line") == .orderedSame)
 
         if let contentLines = body.Content {
             for contentLine in contentLines {
@@ -210,8 +344,8 @@ actor SpicyLyricsService {
                     let rawContentText = contentLine.Text ?? contentLine.Lead?.Syllables?.map(\.Text).joined(separator: " ") ?? ""
                     let text = rawContentText.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !text.isEmpty else { continue }
-                    let startMs = max(0, Int((contentLine.StartTime ?? contentLine.Lead?.StartTime ?? 0.0) * 1000.0))
-                    let endMs = max(startMs + 500, Int((contentLine.EndTime ?? contentLine.Lead?.EndTime ?? (Double(startMs) / 1000.0 + 3.0)) * 1000.0))
+                    let startMs = isStatic ? 0 : max(0, Int((contentLine.StartTime ?? contentLine.Lead?.StartTime ?? 0.0) * 1000.0))
+                    let endMs = isStatic ? 0 : max(startMs + 500, Int((contentLine.EndTime ?? contentLine.Lead?.EndTime ?? (Double(startMs) / 1000.0 + 3.0)) * 1000.0))
                     let opposite = contentLine.OppositeAligned ?? contentLine.Lead?.OppositeAligned ?? (contentLine.agent != nil && contentLine.agent != "1" && contentLine.agent != "v1")
 
                     unitLeadLines.append(
@@ -228,7 +362,8 @@ actor SpicyLyricsService {
                             interludeEndMs: -1,
                             translation: contentLine.TranslatedText ?? contentLine.Lead?.TranslatedText,
                             romanization: contentLine.TransliteratedText ?? contentLine.Lead?.TransliteratedText,
-                            rawText: text
+                            rawText: text,
+                            isStatic: isStatic
                         )
                     )
                 } else if let lead = contentLine.Lead {
@@ -238,15 +373,35 @@ actor SpicyLyricsService {
                     let rawSyllables = lead.Syllables ?? []
 
                     var candidateWords: [LyricWord] = []
-                    for syl in rawSyllables {
+                    for (sylIndex, syl) in rawSyllables.enumerated() {
                         let sylStart = max(0, Int(syl.StartTime * 1000.0))
                         let sylEnd = max(sylStart + 1, Int(syl.EndTime * 1000.0))
                         let rawToken = syl.Text
                         let trimmedToken = rawToken.trimmingCharacters(in: .whitespaces)
                         guard !trimmedToken.isEmpty else { continue }
 
-                        let hasLeadingSpace = rawToken.hasPrefix(" ")
-                        let isPart = (syl.IsPartOfWord ?? false) && !hasLeadingSpace
+                        let hasTrailingSpace = rawToken.hasSuffix(" ") || rawToken.hasSuffix("\t")
+                        let endsWithHyphen = trimmedToken.hasSuffix("-") || trimmedToken.hasSuffix("–") || trimmedToken.hasSuffix("—")
+                        let isLastSyllable = sylIndex == rawSyllables.count - 1
+
+                        var nextHasLeadingSpace = false
+                        if sylIndex + 1 < rawSyllables.count {
+                            let nextRaw = rawSyllables[sylIndex + 1].Text
+                            nextHasLeadingSpace = nextRaw.hasPrefix(" ") || nextRaw.hasPrefix("\t")
+                        }
+
+                        let isPart: Bool
+                        if isLastSyllable {
+                            isPart = false
+                        } else if hasTrailingSpace || nextHasLeadingSpace {
+                            isPart = false
+                        } else if endsWithHyphen {
+                            isPart = true
+                        } else if let explicitPart = syl.IsPartOfWord {
+                            isPart = explicitPart
+                        } else {
+                            isPart = true
+                        }
                         let duration = max(sylEnd - sylStart, 1)
 
                         // Only genuine single syllables without spaces held over 1.2s should animate letter groups
@@ -275,6 +430,18 @@ actor SpicyLyricsService {
                                 isLetterGroup: isLetterGroup,
                                 letters: letters
                             )
+                        )
+                    }
+
+                    if let lastIdx = candidateWords.indices.last, candidateWords[lastIdx].isPartOfWord {
+                        let last = candidateWords[lastIdx]
+                        candidateWords[lastIdx] = LyricWord(
+                            text: last.text,
+                            startMs: last.startMs,
+                            endMs: last.endMs,
+                            isPartOfWord: false,
+                            isLetterGroup: last.isLetterGroup,
+                            letters: last.letters
                         )
                     }
 
@@ -353,14 +520,35 @@ actor SpicyLyricsService {
                         let bgStart = Int((bg.StartTime ?? Double(baseLeadStart) / 1000.0) * 1000.0)
                         var bgWords: [LyricWord] = []
                         if let bgSyllables = bg.Syllables {
-                            for syl in bgSyllables {
+                            for (sylIndex, syl) in bgSyllables.enumerated() {
                                 let sStart = Int(syl.StartTime * 1000.0)
                                 let sEnd = Int(syl.EndTime * 1000.0)
                                 let rawToken = syl.Text
                                 let trimmedToken = rawToken.trimmingCharacters(in: .whitespaces)
                                 guard !trimmedToken.isEmpty else { continue }
-                                let hasLeadingSpace = rawToken.hasPrefix(" ")
-                                let isPart = (syl.IsPartOfWord ?? false) && !hasLeadingSpace
+                                let hasLeadingSpace = rawToken.hasPrefix(" ") || rawToken.hasPrefix("\t")
+                                let hasTrailingSpace = rawToken.hasSuffix(" ") || rawToken.hasSuffix("\t")
+                                let endsWithHyphen = trimmedToken.hasSuffix("-") || trimmedToken.hasSuffix("–") || trimmedToken.hasSuffix("—")
+                                let isLastSyllable = sylIndex == bgSyllables.count - 1
+
+                                var nextHasLeadingSpace = false
+                                if sylIndex + 1 < bgSyllables.count {
+                                    let nextRaw = bgSyllables[sylIndex + 1].Text
+                                    nextHasLeadingSpace = nextRaw.hasPrefix(" ") || nextRaw.hasPrefix("\t")
+                                }
+
+                                let isPart: Bool
+                                if isLastSyllable {
+                                    isPart = false
+                                } else if hasTrailingSpace || nextHasLeadingSpace {
+                                    isPart = false
+                                } else if endsWithHyphen {
+                                    isPart = true
+                                } else if let explicitPart = syl.IsPartOfWord {
+                                    isPart = explicitPart
+                                } else {
+                                    isPart = true
+                                }
                                 bgWords.append(
                                     LyricWord(
                                         text: trimmedToken,
@@ -372,6 +560,18 @@ actor SpicyLyricsService {
                                     )
                                 )
                             }
+                        }
+
+                        if let lastIdx = bgWords.indices.last, bgWords[lastIdx].isPartOfWord {
+                            let last = bgWords[lastIdx]
+                            bgWords[lastIdx] = LyricWord(
+                                text: last.text,
+                                startMs: last.startMs,
+                                endMs: last.endMs,
+                                isPartOfWord: false,
+                                isLetterGroup: last.isLetterGroup,
+                                letters: last.letters
+                            )
                         }
 
                         let rawBgText = bg.TranslatedText ?? bg.TransliteratedText ?? ""
@@ -451,7 +651,8 @@ actor SpicyLyricsService {
                     interludeEndMs: -1,
                     translation: line.translation,
                     romanization: line.romanization,
-                    rawText: line.displayText
+                    rawText: line.displayText,
+                    isStatic: isStatic || line.isStatic
                 )
             }
 
@@ -463,13 +664,15 @@ actor SpicyLyricsService {
             }
         }
 
-        // Sort vocal units by their startMs
-        vocalUnits.sort { $0.startMs < $1.startMs }
+        if !isStatic {
+            // Sort vocal units by their startMs for timed songs
+            vocalUnits.sort { $0.startMs < $1.startMs }
+        }
 
         var sortedAll: [LyricLine] = []
 
-        // 1. Intro interlude if first vocal unit starts after >= 3000ms
-        if let first = vocalUnits.first, first.startMs >= 3000 {
+        // 1. Intro interlude if first vocal unit starts after >= 3000ms (only for synced songs)
+        if !isStatic, let first = vocalUnits.first, first.startMs >= 3000 {
             let dotWords = createInterludeDotWords(startMs: 0, endMs: first.startMs)
             let lead = first.leadLines.first
             sortedAll.append(
@@ -495,7 +698,7 @@ actor SpicyLyricsService {
             // Always append the vocal unit's lines together (lead vocal first, followed immediately by its background vocals)
             sortedAll.append(contentsOf: unit.allLines)
 
-            if index < vocalUnits.count - 1 {
+            if !isStatic, index < vocalUnits.count - 1 {
                 let nextUnit = vocalUnits[index + 1]
                 let gapStart = unit.endMs  // All vocals (lead AND background) have ended!
                 let gapEnd = nextUnit.startMs // Next vocal unit begins!
@@ -536,7 +739,8 @@ actor SpicyLyricsService {
             lines: sortedAll,
             songwriters: songwriters,
             source: body.source,
-            attribution: attribution
+            attribution: attribution,
+            isStatic: isStatic
         )
     }
 }

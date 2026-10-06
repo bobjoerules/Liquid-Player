@@ -232,9 +232,17 @@ struct SpicySyllableTokenView: View {
     var isBounceEnabled: Bool = true
     var activeColor: Color = .white
     var isExactColorEnabled: Bool = true
+    var isSpecialWordEffectsEnabled: Bool = true
     var groupText: String? = nil
     var matchedColorWord: Color? = nil
+    var matchedSpecialEffect: WordSpecialEffect? = nil
+    var tokenFont: Font? = nil
+    var isGroupSplit: Bool = false
     @Environment(\.colorScheme) private var colorScheme
+
+    private var isSyllableSplit: Bool {
+        isGroupSplit || word.isPartOfWord || (groupText != nil && groupText != cleanText)
+    }
 
     var body: some View {
         if word.isLetterGroup && !word.letters.isEmpty {
@@ -246,6 +254,26 @@ struct SpicySyllableTokenView: View {
 
     private var cleanText: String {
         word.text.trimmingCharacters(in: .whitespaces)
+    }
+
+    private var specialEffect: WordSpecialEffect? {
+        guard isSpecialWordEffectsEnabled else { return nil }
+        if let effect = matchedSpecialEffect {
+            return effect
+        }
+        if let gt = groupText {
+            return SpecialWordEffectsLookup.effect(for: gt)
+        }
+        if word.isPartOfWord {
+            return nil
+        }
+        let trimmed = cleanText
+        if trimmed.hasPrefix("-") || trimmed.hasSuffix("-") ||
+           trimmed.hasPrefix("–") || trimmed.hasSuffix("–") ||
+           trimmed.hasPrefix("—") || trimmed.hasSuffix("—") {
+            return nil
+        }
+        return SpecialWordEffectsLookup.effect(for: trimmed)
     }
 
     private var colorWord: Color? {
@@ -321,23 +349,39 @@ struct SpicySyllableTokenView: View {
 
     @ViewBuilder
     private var singleSyllableView: some View {
-        if !isLineActive {
-            let isWordSung = isLinePast || currentTimeMs >= word.endMs
+        let isWordSung = isLinePast || currentTimeMs >= word.endMs
+        let isWordActive = isLineActive && word.startMs <= currentTimeMs && currentTimeMs < word.endMs
+        let duration = max(word.endMs - word.startMs, 1)
+        let progress = max(0.0, min(1.0, Double(currentTimeMs - word.startMs) / Double(duration)))
+        let scale = (isBounceEnabled && isWordActive) ? SpicySplines.scaleSpline.at(progress) : 1.0
+        let yLift = (isBounceEnabled && isWordActive) ? (SpicySplines.ySpline.at(progress) * 32.0) : 0.0
+        let scaleX: CGFloat = isSyllableSplit ? 1.0 : scale
+        let scaleY: CGFloat = scale
+
+        if let effect = specialEffect {
+            SpecialWordEffectTokenView(
+                text: cleanText,
+                effect: effect,
+                currentTimeMs: currentTimeMs,
+                isLineActive: isLineActive,
+                isWordActive: isWordActive,
+                isWordSung: isWordSung,
+                progress: progress,
+                inactiveColor: inactiveWordColor,
+                font: tokenFont ?? .system(size: 28, weight: .heavy),
+                isGlowEnabled: isGlowEnabled
+            )
+            .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
+            .offset(y: yLift)
+        } else if !isLineActive {
             Text(cleanText)
                 .foregroundStyle(isWordSung ? pastWordColor : inactiveWordColor)
         } else {
-            let isWordSung = currentTimeMs >= word.endMs
-            let isWordActive = word.startMs <= currentTimeMs && currentTimeMs < word.endMs
-
             if isWordActive {
                 let wordActiveColor = activeWordColor
-                let duration = max(word.endMs - word.startMs, 1)
-                let progress = max(0.0, min(1.0, Double(currentTimeMs - word.startMs) / Double(duration)))
-                let scale = isBounceEnabled ? SpicySplines.scaleSpline.at(progress) : 1.0
-                let yLift = isBounceEnabled ? (SpicySplines.ySpline.at(progress) * 32.0) : 0.0
                 let p = -0.15 + 1.30 * progress
-                let stop1 = max(0.0, min(0.95, p))
-                let stop2 = min(1.0, max(stop1 + 0.05, p + 0.20))
+                let stop1 = max(0.0, min(1.0, p))
+                let stop2 = min(1.0, max(stop1 + 0.05, p + 0.18))
                 let glowProgress = SpicySplines.glowSpline.at(progress)
                 let glowOpacity = isGlowEnabled ? (glowProgress * (colorScheme == .light ? 0.30 : 0.85)) : 0.0
 
@@ -352,7 +396,7 @@ struct SpicySyllableTokenView: View {
                             endPoint: .trailing
                         )
                     )
-                    .scaleEffect(scale)
+                    .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
                     .offset(y: yLift)
                     .shadow(color: isGlowEnabled ? wordActiveColor.opacity(glowOpacity) : Color.clear, radius: isGlowEnabled ? 10 : 0, x: 0, y: 0)
             } else if isWordSung {
@@ -367,8 +411,32 @@ struct SpicySyllableTokenView: View {
 
     @ViewBuilder
     private var letterGroupView: some View {
-        if !isLineActive {
-            let isWordSung = isLinePast || currentTimeMs >= word.endMs
+        let isWordSung = isLinePast || currentTimeMs >= word.endMs
+        let isWordActive = isLineActive && word.startMs <= currentTimeMs && currentTimeMs < word.endMs
+
+        if let effect = specialEffect {
+            let duration = max(word.endMs - word.startMs, 1)
+            let progress = max(0.0, min(1.0, Double(currentTimeMs - word.startMs) / Double(duration)))
+            let scale = (isBounceEnabled && isWordActive) ? SpicySplines.scaleSpline.at(progress) : 1.0
+            let yLift = (isBounceEnabled && isWordActive) ? (SpicySplines.ySpline.at(progress) * 32.0) : 0.0
+            let scaleX: CGFloat = isSyllableSplit ? 1.0 : scale
+            let scaleY: CGFloat = scale
+
+            SpecialWordEffectTokenView(
+                text: cleanText,
+                effect: effect,
+                currentTimeMs: currentTimeMs,
+                isLineActive: isLineActive,
+                isWordActive: isWordActive,
+                isWordSung: isWordSung,
+                progress: progress,
+                inactiveColor: inactiveWordColor,
+                font: tokenFont ?? .system(size: 28, weight: .heavy),
+                isGlowEnabled: isGlowEnabled
+            )
+            .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
+            .offset(y: yLift)
+        } else if !isLineActive {
             Text(cleanText)
                 .foregroundStyle(isWordSung ? pastWordColor : inactiveWordColor)
         } else {
@@ -399,7 +467,7 @@ struct SpicySyllableTokenView: View {
                                     endPoint: .trailing
                                 )
                             )
-                            .scaleEffect(scale)
+                            .scaleEffect(x: 1.0, y: scale, anchor: .bottom)
                             .offset(y: yLift)
                             .shadow(color: isGlowEnabled ? wordActiveColor.opacity(letterGlow) : Color.clear, radius: isGlowEnabled ? 8 : 0, x: 0, y: 0)
                     } else if isLetterSung {
@@ -428,6 +496,7 @@ struct SpicyWordGroupView: View {
     var isBounceEnabled: Bool = true
     var activeColor: Color = .white
     var isExactColorEnabled: Bool = true
+    var isSpecialWordEffectsEnabled: Bool = true
 
     var body: some View {
         let fullGroupWord = group.words.map(\.text).joined()
@@ -451,6 +520,26 @@ struct SpicyWordGroupView: View {
             return ColorWordsLookup.color(for: fullGroupWord)
         }()
 
+        let groupSpecialEffect: WordSpecialEffect? = {
+            guard isSpecialWordEffectsEnabled else { return nil }
+            if let last = group.words.last {
+                if last.isPartOfWord { return nil }
+                let lastTrimmed = last.text.trimmingCharacters(in: .whitespaces)
+                if lastTrimmed.hasSuffix("-") || lastTrimmed.hasSuffix("–") || lastTrimmed.hasSuffix("—") {
+                    return nil
+                }
+            }
+            if let first = group.words.first {
+                let firstTrimmed = first.text.trimmingCharacters(in: .whitespaces)
+                if firstTrimmed.hasPrefix("-") || firstTrimmed.hasPrefix("–") || firstTrimmed.hasPrefix("—") {
+                    return nil
+                }
+            }
+            return SpecialWordEffectsLookup.effect(for: fullGroupWord)
+        }()
+
+        let isGroupSplit = group.words.count > 1
+
         HStack(spacing: 0) {
             ForEach(group.words) { word in
                 SpicySyllableTokenView(
@@ -463,8 +552,12 @@ struct SpicyWordGroupView: View {
                     isBounceEnabled: isBounceEnabled,
                     activeColor: activeColor,
                     isExactColorEnabled: isExactColorEnabled,
+                    isSpecialWordEffectsEnabled: isSpecialWordEffectsEnabled,
                     groupText: fullGroupWord,
-                    matchedColorWord: groupColorWord
+                    matchedColorWord: groupColorWord,
+                    matchedSpecialEffect: groupSpecialEffect,
+                    tokenFont: lineFont,
+                    isGroupSplit: isGroupSplit
                 )
             }
             if group.hasTrailingSpace {
@@ -577,8 +670,7 @@ struct SpicyDotLineView: View {
                     )
             }
         }
-        .padding(.top, 16) // Headroom for the upward jump
-        .padding(.bottom, 6)
+        .padding(.vertical, 0)
         .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
         .padding(.leading, line.oppositeAligned ? 36 : 16)
         .padding(.trailing, line.oppositeAligned ? 16 : 36)
@@ -699,6 +791,7 @@ struct SpicyLyricLineView: View, Equatable {
     let isBounceEnabled: Bool
     let activeColor: Color
     var isExactColorEnabled: Bool = true
+    var isSpecialWordEffectsEnabled: Bool = true
     var isSongUnsynced: Bool = false
     var isPlaying: Bool = true
     let onSeek: (Int) -> Void
@@ -718,6 +811,7 @@ struct SpicyLyricLineView: View, Equatable {
         lhs.isBounceEnabled == rhs.isBounceEnabled &&
         lhs.activeColor == rhs.activeColor &&
         lhs.isExactColorEnabled == rhs.isExactColorEnabled &&
+        lhs.isSpecialWordEffectsEnabled == rhs.isSpecialWordEffectsEnabled &&
         lhs.isSongUnsynced == rhs.isSongUnsynced &&
         lhs.isPlaying == rhs.isPlaying &&
         (!((lhs.isLineActive || lhs.line.isInterlude)) || lhs.currentTimeMs == rhs.currentTimeMs)
@@ -738,6 +832,7 @@ struct SpicyLyricLineView: View, Equatable {
         isBounceEnabled: Bool = true,
         activeColor: Color = .white,
         isExactColorEnabled: Bool = true,
+        isSpecialWordEffectsEnabled: Bool = true,
         isSongUnsynced: Bool = false,
         isPlaying: Bool = true,
         onSeek: @escaping (Int) -> Void = { _ in }
@@ -756,6 +851,7 @@ struct SpicyLyricLineView: View, Equatable {
         self.isBounceEnabled = isBounceEnabled
         self.activeColor = activeColor
         self.isExactColorEnabled = isExactColorEnabled
+        self.isSpecialWordEffectsEnabled = isSpecialWordEffectsEnabled
         self.isSongUnsynced = isSongUnsynced
         self.isPlaying = isPlaying
         self.onSeek = onSeek
@@ -774,7 +870,8 @@ struct SpicyLyricLineView: View, Equatable {
                     activeColor: activeColor,
                     isPlaying: isPlaying
                 )
-                .frame(height: isCurrent ? 72 : 0)
+                .frame(height: isCurrent ? 52 : 0)
+                .offset(y: -1)
                 .opacity(isCurrent ? 1.0 : 0.0)
                 .frame(maxWidth: .infinity, alignment: line.oppositeAligned ? .trailing : .leading)
                 .contentShape(Rectangle())
@@ -806,7 +903,8 @@ struct SpicyLyricLineView: View, Equatable {
                             return isLineActive ? activeLineColor : (isLinePast ? pastColor : inactiveColor)
                         }()
 
-                        let hasColorWords = isExactColorEnabled && lineHasColorWords(line.displayText)
+                        let hasColorWords = (isExactColorEnabled && lineHasColorWords(line.displayText)) ||
+                                            (isSpecialWordEffectsEnabled && lineHasSpecialEffectWords(line.displayText))
                         let shouldLineGlow = isGlowEnabled && isLineActive && !isSongUnsynced && !line.isStatic
 
                         if hasColorWords {
@@ -839,7 +937,8 @@ struct SpicyLyricLineView: View, Equatable {
                                     isGlowEnabled: isGlowEnabled,
                                     isBounceEnabled: isBounceEnabled,
                                     activeColor: activeColor,
-                                    isExactColorEnabled: isExactColorEnabled
+                                    isExactColorEnabled: isExactColorEnabled,
+                                    isSpecialWordEffectsEnabled: isSpecialWordEffectsEnabled
                                 )
                             }
                         }
@@ -902,7 +1001,15 @@ struct SpicyLyricLineView: View, Equatable {
     }
 
     private func lineHasColorWords(_ text: String) -> Bool {
-        text.split(separator: " ").contains { ColorWordsLookup.color(for: String($0)) != nil }
+        text.split(separator: " ").contains {
+            ColorWordsLookup.color(for: String($0)) != nil
+        }
+    }
+
+    private func lineHasSpecialEffectWords(_ text: String) -> Bool {
+        text.split(separator: " ").contains {
+            SpecialWordEffectsLookup.effect(for: String($0)) != nil
+        }
     }
 
     @ViewBuilder
@@ -917,34 +1024,52 @@ struct SpicyLyricLineView: View, Equatable {
 
         SpicyFlowLayout(alignment: line.oppositeAligned ? .trailing : .leading) {
             ForEach(Array(tokens.enumerated()), id: \.offset) { index, token in
-                let matchedColor = ColorWordsLookup.color(for: token)
-                let wordColor: Color = {
-                    if let cw = matchedColor {
-                        if isHighlightState {
-                            return cw
-                        } else if isLinePast {
-                            return line.isBackground ? cw.opacity(0.80) : cw
-                        } else {
-                            return cw.opacity(line.isBackground ? 0.30 : 0.40)
-                        }
-                    }
-                    return baseColor
-                }()
-
-                let wordGlowColor: Color = matchedColor ?? activeColor
+                let matchedEffect = isSpecialWordEffectsEnabled ? SpecialWordEffectsLookup.effect(for: token) : nil
+                let matchedColor = isExactColorEnabled ? ColorWordsLookup.color(for: token) : nil
                 let isLast = index == tokens.count - 1
 
                 HStack(spacing: 0) {
-                    Text(token)
-                        .font(lineFont)
-                        .tracking(-0.5)
-                        .foregroundStyle(wordColor)
-                        .shadow(
-                            color: shouldGlow ? wordGlowColor.opacity(glowOpacity) : Color.clear,
-                            radius: shouldGlow ? 10 : 0,
-                            x: 0,
-                            y: 0
+                    if let effect = matchedEffect {
+                        SpecialWordEffectTokenView(
+                            text: token,
+                            effect: effect,
+                            currentTimeMs: currentTimeMs,
+                            isLineActive: isLineActive,
+                            isWordActive: isHighlightState,
+                            isWordSung: isLinePast,
+                            progress: isHighlightState ? 1.0 : 0.0,
+                            inactiveColor: baseColor,
+                            font: lineFont,
+                            isGlowEnabled: shouldGlow
                         )
+                    } else {
+                        let wordColor: Color = {
+                            if let cw = matchedColor {
+                                if isHighlightState {
+                                    return cw
+                                } else if isLinePast {
+                                    return line.isBackground ? cw.opacity(0.80) : cw
+                                } else {
+                                    return cw.opacity(line.isBackground ? 0.30 : 0.40)
+                                }
+                            }
+                            return baseColor
+                        }()
+
+                        let wordGlowColor: Color = matchedColor ?? activeColor
+
+                        Text(token)
+                            .font(lineFont)
+                            .tracking(-0.5)
+                            .foregroundStyle(wordColor)
+                            .shadow(
+                                color: shouldGlow ? wordGlowColor.opacity(glowOpacity) : Color.clear,
+                                radius: shouldGlow ? 10 : 0,
+                                x: 0,
+                                y: 0
+                            )
+                    }
+
                     if !isLast {
                         Text(" ")
                             .font(lineFont)

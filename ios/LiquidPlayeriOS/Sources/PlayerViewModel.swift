@@ -519,6 +519,7 @@ final class PlayerViewModel: ObservableObject {
     @Published var lyricsStatus: String = "Connect with Spotify to begin live playback."
     @Published var isLoadingLyrics: Bool = false
     @Published var errorMessage: String?
+    @Published var importToastMessage: String?
     @Published var lyricOffsetMs: Int = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.lyricOffsetMs") as? Int ?? 0 {
         didSet {
             UserDefaults.standard.set(lyricOffsetMs, forKey: "LiquidPlayeriOS.lyricOffsetMs")
@@ -668,6 +669,12 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
+    @Published var isSpecialWordEffectsEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isSpecialWordEffectsEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(isSpecialWordEffectsEnabled, forKey: "LiquidPlayeriOS.isSpecialWordEffectsEnabled")
+        }
+    }
+
     @Published var lyricsColorHex: String = UserDefaults.standard.string(forKey: "LiquidPlayeriOS.lyricsColorHex") ?? "#FFFFFF" {
         didSet {
             UserDefaults.standard.set(lyricsColorHex, forKey: "LiquidPlayeriOS.lyricsColorHex")
@@ -693,6 +700,16 @@ final class PlayerViewModel: ObservableObject {
 
     func artworkColor(for colorScheme: ColorScheme = .dark) -> Color {
         Color(hex: artworkHex(for: colorScheme))
+    }
+
+    func artworkDuetHex(for colorScheme: ColorScheme = .dark) -> String {
+        // Second most prominent color from album artwork palette
+        let rawHex = artworkPaletteHexes.count > 1 ? artworkPaletteHexes[1] : artworkHex(for: colorScheme)
+        return LyricColorPreset.resolveAdaptiveHex(rawHex, for: colorScheme)
+    }
+
+    func artworkDuetColor(for colorScheme: ColorScheme = .dark) -> Color {
+        Color(hex: artworkDuetHex(for: colorScheme))
     }
 
     func isArtworkColorBright(for colorScheme: ColorScheme = .dark) -> Bool {
@@ -838,6 +855,20 @@ final class PlayerViewModel: ObservableObject {
 
         if key == "v1" || key == "1" {
             return defaultColor
+        }
+
+        if isArtworkColorMode {
+            if key == "v2" || key == "2" {
+                return artworkDuetColor(for: colorScheme)
+            }
+            if key == "v3" || key == "3", artworkPaletteHexes.count > 2 {
+                let rawHex = artworkPaletteHexes[2]
+                return Color(hex: LyricColorPreset.resolveAdaptiveHex(rawHex, for: colorScheme))
+            }
+            if key == "v4" || key == "4", artworkPaletteHexes.count > 3 {
+                let rawHex = artworkPaletteHexes[3]
+                return Color(hex: LyricColorPreset.resolveAdaptiveHex(rawHex, for: colorScheme))
+            }
         }
 
         if let hex = voiceColors[key], !hex.isEmpty {
@@ -1419,6 +1450,99 @@ final class PlayerViewModel: ObservableObject {
             lyricsAttribution = nil
             lyricsSongwriters = []
         }
+    }
+
+    /// Imports a locally selected TTML file and associates it with the specified song or matches it to current playback/library.
+    func importLocalTTML(url: URL, targetTrackId: String? = nil) {
+        let isAccessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if isAccessing {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard let data = try? Data(contentsOf: url),
+              let content = String(data: data, encoding: .utf8) else {
+            self.errorMessage = "Could not read TTML file"
+            return
+        }
+
+        importLocalTTML(content: content, filename: url.lastPathComponent, targetTrackId: targetTrackId)
+    }
+
+    /// Parses and saves local TTML content
+    func importLocalTTML(content: String, filename: String, targetTrackId: String? = nil) {
+        guard let parsed = try? TTMLLyricsParser.parse(data: Data(content.utf8)), !parsed.lines.isEmpty else {
+            self.errorMessage = "File could not be parsed as valid TTML"
+            return
+        }
+
+        let extractedTitle = extractTTMLTitle(from: content)
+        let resolvedTitle: String = {
+            if let ttmlTitle = extractedTitle, !ttmlTitle.isEmpty {
+                return ttmlTitle
+            }
+            let base = filename
+                .replacingOccurrences(of: ".ttml", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: ".xml", with: "", options: .caseInsensitive)
+            return base.isEmpty ? "Imported Track" : base
+        }()
+
+        let resolvedArtist: String = {
+            if !parsed.songwriters.isEmpty {
+                return parsed.songwriters.joined(separator: ", ")
+            }
+            return !nowPlayingArtist.isEmpty && nowPlayingArtist != "Liquid Player" ? nowPlayingArtist : "Local Artist"
+        }()
+
+        let cleanTargetId: String? = targetTrackId?.replacingOccurrences(of: "spotify:track:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let trackId: String = {
+            if let target = cleanTargetId, !target.isEmpty {
+                return target
+            }
+            if !nowPlayingTitle.isEmpty, TrackMatchUtils.titlesMatch(requested: nowPlayingTitle, candidate: resolvedTitle) {
+                return currentTrackId ?? "local_\(UUID().uuidString.prefix(8))"
+            }
+            if let match = LibraryManager.shared.songs.first(where: { TrackMatchUtils.titlesMatch(requested: $0.name, candidate: resolvedTitle) }) {
+                return match.id
+            }
+            return "local_\(UUID().uuidString.prefix(12))"
+        }()
+
+        // 1. Save TTML into disk and LibraryManager
+        LibraryManager.shared.saveTTML(for: trackId, ttml: content, source: "Local TTML")
+
+        // 2. Ensure track exists in Library
+        let duration = parsed.lines.map(\.endMs).max() ?? 0
+        LibraryManager.shared.recordSongPlayed(
+            trackId: trackId,
+            title: resolvedTitle,
+            artist: resolvedArtist,
+            durationMs: duration
+        )
+
+        // 3. Cache parsed lyrics
+        self.lyricsCache[trackId] = parsed
+
+        // 4. If current track matches or this was specifically targeted, load immediately!
+        let isForCurrent = (currentTrackId == trackId) || (selectedTrackID == trackId) || TrackMatchUtils.titlesMatch(requested: nowPlayingTitle, candidate: resolvedTitle)
+        if isForCurrent || currentTrackId == nil {
+            self.currentTrackId = trackId
+            self.lines = parsed.lines
+            self.lyricsSource = "Local TTML"
+            self.lyricsAttribution = parsed.attribution
+            self.lyricsSongwriters = parsed.songwriters
+            self.updateLyricsStatus(from: parsed)
+            self.isLoadingLyrics = false
+            self.errorMessage = nil
+            if self.nowPlayingTitle == "No Track Playing" || self.nowPlayingTitle.isEmpty {
+                self.nowPlayingTitle = resolvedTitle
+                self.nowPlayingArtist = resolvedArtist
+            }
+        }
+
+        self.importToastMessage = "Uploaded TTML for \"\(resolvedTitle)\""
     }
 
     /// Forces a fresh request directly to Spicy Lyrics, clearing any non-Spicy cached fallbacks

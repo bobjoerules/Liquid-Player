@@ -38,37 +38,37 @@ enum APIConfig {
 
     static var spotifyClientId: String {
         get {
-            if let saved = UserDefaults.standard.string(forKey: spotifyClientIdKey), !saved.isEmpty {
-                return saved
+            if let saved = UserDefaults.standard.string(forKey: spotifyClientIdKey), !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return saved.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            if let envKey = ProcessInfo.processInfo.environment["SPOTIFY_CLIENT_ID"], !envKey.isEmpty {
-                return envKey
+            if let envKey = ProcessInfo.processInfo.environment["SPOTIFY_CLIENT_ID"], !envKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return envKey.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            if let plistKey = Bundle.main.object(forInfoDictionaryKey: "SpotifyClientId") as? String, !plistKey.isEmpty {
-                return plistKey
+            if let plistKey = Bundle.main.object(forInfoDictionaryKey: "SpotifyClientId") as? String, !plistKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return plistKey.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             return defaultSpotifyClientId
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: spotifyClientIdKey)
+            UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: spotifyClientIdKey)
         }
     }
 
     static var spotifyClientSecret: String {
         get {
-            if let saved = UserDefaults.standard.string(forKey: spotifyClientSecretKey), !saved.isEmpty {
-                return saved
+            if let saved = UserDefaults.standard.string(forKey: spotifyClientSecretKey), !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return saved.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            if let envKey = ProcessInfo.processInfo.environment["SPOTIFY_CLIENT_SECRET"], !envKey.isEmpty {
-                return envKey
+            if let envKey = ProcessInfo.processInfo.environment["SPOTIFY_CLIENT_SECRET"], !envKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return envKey.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            if let plistKey = Bundle.main.object(forInfoDictionaryKey: "SpotifyClientSecret") as? String, !plistKey.isEmpty {
-                return plistKey
+            if let plistKey = Bundle.main.object(forInfoDictionaryKey: "SpotifyClientSecret") as? String, !plistKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return plistKey.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             return defaultSpotifyClientSecret
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: spotifyClientSecretKey)
+            UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: spotifyClientSecretKey)
         }
     }
 

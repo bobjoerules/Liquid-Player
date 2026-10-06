@@ -7,22 +7,26 @@ import UIKit
 struct MotionArtworkPlayerView: UIViewRepresentable {
     let streamURL: URL
     var gravity: AVLayerVideoGravity = .resizeAspectFill
+    var placeholder: UIImage? = nil
 
-    init(streamURL: URL, gravity: AVLayerVideoGravity = .resizeAspectFill) {
+    init(streamURL: URL, gravity: AVLayerVideoGravity = .resizeAspectFill, placeholder: UIImage? = nil) {
         self.streamURL = streamURL
         self.gravity = gravity
+        self.placeholder = placeholder
     }
 
     func makeUIView(context: Context) -> MotionPlayerContainerView {
         let view = MotionPlayerContainerView()
         view.isUserInteractionEnabled = false
         view.gravity = gravity
+        view.setPlaceholder(placeholder)
         view.configure(with: streamURL)
         return view
     }
 
     func updateUIView(_ uiView: MotionPlayerContainerView, context: Context) {
         uiView.gravity = gravity
+        uiView.setPlaceholder(placeholder)
         if uiView.currentURL != streamURL {
             uiView.configure(with: streamURL)
         }
@@ -38,6 +42,14 @@ final class MotionPlayerContainerView: UIView {
     private var playerLooper: AVPlayerLooper?
     private var playerLayer: AVPlayerLayer?
     private(set) var currentURL: URL?
+    private var readyObservation: NSKeyValueObservation?
+    private let placeholderImageView: UIImageView = {
+        let iv = UIImageView()
+        iv.contentMode = .scaleAspectFill
+        iv.clipsToBounds = true
+        iv.backgroundColor = .clear
+        return iv
+    }()
 
     var gravity: AVLayerVideoGravity = .resizeAspectFill {
         didSet {
@@ -48,13 +60,24 @@ final class MotionPlayerContainerView: UIView {
     override public init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
+        addSubview(placeholderImageView)
         setupNotifications()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         backgroundColor = .clear
+        addSubview(placeholderImageView)
         setupNotifications()
+    }
+
+    public func setPlaceholder(_ image: UIImage?) {
+        if let image = image {
+            placeholderImageView.image = image
+            if playerLayer?.isReadyForDisplay != true {
+                placeholderImageView.alpha = 1.0
+            }
+        }
     }
 
     public func configure(with url: URL) {
@@ -63,7 +86,7 @@ final class MotionPlayerContainerView: UIView {
             return
         }
 
-        cleanup()
+        cleanup(preservePlaceholder: true)
         currentURL = url
 
         let asset = AVURLAsset(url: url)
@@ -82,8 +105,22 @@ final class MotionPlayerContainerView: UIView {
         let layer = AVPlayerLayer(player: player)
         layer.videoGravity = gravity
         layer.frame = bounds
+        layer.opacity = 0.0 // Start invisible so black frames are never visible
         self.layer.addSublayer(layer)
         self.playerLayer = layer
+
+        readyObservation = layer.observe(\.isReadyForDisplay, options: [.new]) { [weak self, weak layer] _, _ in
+            guard let self = self, let layer = layer, layer.isReadyForDisplay else { return }
+            DispatchQueue.main.async {
+                CATransaction.begin()
+                CATransaction.setAnimationDuration(0.35)
+                CATransaction.setCompletionBlock {
+                    self.placeholderImageView.alpha = 0.0
+                }
+                layer.opacity = 1.0
+                CATransaction.commit()
+            }
+        }
 
         player.play()
     }
@@ -92,6 +129,7 @@ final class MotionPlayerContainerView: UIView {
         super.layoutSubviews()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        placeholderImageView.frame = bounds
         playerLayer?.frame = bounds
         CATransaction.commit()
     }
@@ -119,7 +157,9 @@ final class MotionPlayerContainerView: UIView {
         queuePlayer?.play()
     }
 
-    public func cleanup() {
+    public func cleanup(preservePlaceholder: Bool = false) {
+        readyObservation?.invalidate()
+        readyObservation = nil
         queuePlayer?.pause()
         queuePlayer?.removeAllItems()
         playerLooper?.disableLooping()
@@ -128,6 +168,10 @@ final class MotionPlayerContainerView: UIView {
         playerLayer = nil
         queuePlayer = nil
         currentURL = nil
+        if !preservePlaceholder {
+            placeholderImageView.image = nil
+            placeholderImageView.alpha = 1.0
+        }
     }
 
     deinit {
@@ -141,10 +185,12 @@ final class MotionPlayerContainerView: UIView {
 public struct MotionArtworkPlayerView: View {
     public let streamURL: URL
     public var gravity: String = "resizeAspectFill"
+    public var placeholder: Any? = nil
 
-    public init(streamURL: URL, gravity: String = "resizeAspectFill") {
+    public init(streamURL: URL, gravity: String = "resizeAspectFill", placeholder: Any? = nil) {
         self.streamURL = streamURL
         self.gravity = gravity
+        self.placeholder = placeholder
     }
 
     public var body: some View {

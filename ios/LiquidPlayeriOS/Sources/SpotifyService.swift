@@ -127,6 +127,13 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
     @Published var availableDevices: [SpotifyDeviceItem] = []
     @Published var authError: String?
+    @Published var isRateLimited: Bool = false
+    @Published var rateLimitRetryAfter: Int = 0
+    @Published var sessionNeedsReauth: Bool = false
+    @Published var isDeviceIdle: Bool = false
+
+    private var rateLimitBackoffUntil: Date = .distantPast
+    private var consecutive401Errors: Int = 0
 
     private(set) var lastActiveDeviceId: String? {
         get { UserDefaults.standard.string(forKey: "LiquidPlayer.spotifyLastActiveDeviceId") }
@@ -215,6 +222,12 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
 
     // MARK: - OAuth Authentication
     func authorize() {
+        self.isRateLimited = false
+        self.rateLimitRetryAfter = 0
+        self.rateLimitBackoffUntil = .distantPast
+        self.sessionNeedsReauth = false
+        self.authError = nil
+
         let verifier = generateCodeVerifier()
         self.codeVerifier = verifier
         let challenge = generateCodeChallenge(from: verifier)
@@ -278,6 +291,9 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
         accessToken = nil
         refreshToken = nil
         tokenExpiration = nil
+        UserDefaults.standard.removeObject(forKey: "LiquidPlayer.spotifyAccessToken")
+        UserDefaults.standard.removeObject(forKey: "LiquidPlayer.spotifyRefreshToken")
+        UserDefaults.standard.removeObject(forKey: "LiquidPlayer.spotifyTokenExpiration")
         lastActiveDeviceId = nil
         isAuthenticated = false
         currentPlayback = nil
@@ -286,6 +302,12 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
         progressMs = 0
         activeDeviceName = nil
         availableDevices = []
+        isRateLimited = false
+        rateLimitRetryAfter = 0
+        rateLimitBackoffUntil = .distantPast
+        sessionNeedsReauth = false
+        consecutive401Errors = 0
+        isDeviceIdle = false
     }
 
     func logout() {
@@ -338,6 +360,12 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
             self.tokenExpiration = Date().addingTimeInterval(TimeInterval(max(tokenData.expires_in - 60, 60)))
             self.isAuthenticated = true
             self.authError = nil
+            self.isRateLimited = false
+            self.rateLimitRetryAfter = 0
+            self.rateLimitBackoffUntil = .distantPast
+            self.sessionNeedsReauth = false
+            self.consecutive401Errors = 0
+            self.isDeviceIdle = false
 
             // Immediately fetch active playback and devices
             await fetchPlaybackState()
@@ -386,9 +414,18 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
         return await task.value
     }
 
+    private func handleRateLimit(response: HTTPURLResponse) {
+        let retryAfterHeader = response.value(forHTTPHeaderField: "Retry-After") ?? ""
+        let seconds = max(Int(retryAfterHeader) ?? 15, 5)
+        self.isRateLimited = true
+        self.rateLimitRetryAfter = seconds
+        self.rateLimitBackoffUntil = Date().addingTimeInterval(Double(seconds))
+        print("[SpotifyService] HTTP 429: Rate limited by Spotify. Backing off for \(seconds)s (until \(self.rateLimitBackoffUntil))")
+    }
+
     private func performRefreshToken(currentRefresh: String) async -> String? {
         guard let url = URL(string: "https://accounts.spotify.com/api/token") else {
-            return accessToken
+            return nil
         }
 
         var request = URLRequest(url: url)
@@ -417,7 +454,7 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
-                return accessToken
+                return nil
             }
 
             if (200...299).contains(httpResponse.statusCode) {
@@ -429,20 +466,24 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
                 self.tokenExpiration = Date().addingTimeInterval(TimeInterval(max(tokenData.expires_in - 60, 60)))
                 self.isAuthenticated = true
                 self.authError = nil
+                self.sessionNeedsReauth = false
+                self.consecutive401Errors = 0
                 return tokenData.access_token
+            } else if httpResponse.statusCode == 429 {
+                handleRateLimit(response: httpResponse)
+                return nil
             } else if httpResponse.statusCode == 400 || httpResponse.statusCode == 401 {
-                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let err = errorJson["error"] as? String, err == "invalid_grant" {
-                    print("[SpotifyService] Token refresh revoked (invalid_grant). Disconnecting.")
-                    self.disconnect()
-                    return nil
-                }
-                return accessToken
+                print("[SpotifyService] Token refresh failed with status \(httpResponse.statusCode). Marking session for re-auth.")
+                self.sessionNeedsReauth = true
+                self.authError = "Spotify login expired. Tap to reconnect."
+                self.accessToken = nil
+                self.tokenExpiration = nil
+                return nil
             } else {
-                return accessToken
+                return nil
             }
         } catch {
-            return accessToken
+            return nil
         }
     }
 
@@ -457,7 +498,16 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
             self.pollTimer?.invalidate()
             let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    await self?.fetchPlaybackState()
+                    guard let self = self else { return }
+                    if Date() < self.rateLimitBackoffUntil {
+                        let remaining = max(1, Int(self.rateLimitBackoffUntil.timeIntervalSinceNow))
+                        self.rateLimitRetryAfter = remaining
+                        return
+                    } else if self.isRateLimited {
+                        self.isRateLimited = false
+                        self.rateLimitRetryAfter = 0
+                    }
+                    await self.fetchPlaybackState()
                 }
             }
             RunLoop.main.add(timer, forMode: .common)
@@ -471,8 +521,20 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
 
     func fetchPlaybackState() async {
+        if Date() < rateLimitBackoffUntil {
+            let remaining = max(1, Int(rateLimitBackoffUntil.timeIntervalSinceNow))
+            self.rateLimitRetryAfter = remaining
+            return
+        } else if isRateLimited {
+            self.isRateLimited = false
+            self.rateLimitRetryAfter = 0
+        }
+
         guard let token = await refreshTokenIfNeeded(),
               let url = URL(string: "https://api.spotify.com/v1/me/player") else {
+            if sessionNeedsReauth {
+                stopPolling()
+            }
             return
         }
 
@@ -485,7 +547,19 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
             let roundTripDuration = Date().timeIntervalSince(requestStartTime)
             guard let httpResponse = response as? HTTPURLResponse else { return }
 
+            if httpResponse.statusCode == 429 {
+                handleRateLimit(response: httpResponse)
+                return
+            }
+
             if httpResponse.statusCode == 401 {
+                consecutive401Errors += 1
+                if consecutive401Errors >= 2 {
+                    self.sessionNeedsReauth = true
+                    self.authError = "Spotify session expired. Please reconnect in Settings."
+                    self.stopPolling()
+                    return
+                }
                 // Token expired mid-session. Force refresh and retry once.
                 if let newToken = await refreshTokenIfNeeded(force: true) {
                     var retryRequest = URLRequest(url: url)
@@ -493,6 +567,10 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
                     let retryStartTime = Date()
                     if let (retryData, retryResp) = try? await URLSession.shared.data(for: retryRequest),
                        let retryHttp = retryResp as? HTTPURLResponse {
+                        if retryHttp.statusCode == 429 {
+                            handleRateLimit(response: retryHttp)
+                            return
+                        }
                         let retryRtt = Date().timeIntervalSince(retryStartTime)
                         await handlePlaybackResponse(data: retryData, statusCode: retryHttp.statusCode, roundTripDuration: retryRtt)
                     }
@@ -500,6 +578,8 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
                 return
             }
 
+            consecutive401Errors = 0
+            sessionNeedsReauth = false
             await handlePlaybackResponse(data: data, statusCode: httpResponse.statusCode, roundTripDuration: roundTripDuration)
         } catch {
             // Silently continue polling
@@ -511,9 +591,8 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
             // No active playback via /me/player, but connection is alive!
             self.isAuthenticated = true
             self.isPlaying = false
-            if self.currentTrack == nil {
-                await fetchCurrentlyPlayingTrackFallback()
-            }
+            self.isDeviceIdle = true
+            await fetchCurrentlyPlayingTrackFallback()
             if self.activeDeviceName == nil {
                 _ = await fetchAvailableDevices()
             }
@@ -521,6 +600,7 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
         }
 
         guard (200...299).contains(statusCode) else { return }
+        self.isDeviceIdle = false
 
         do {
             let state = try JSONDecoder().decode(SpotifyPlaybackState.self, from: data)
@@ -569,6 +649,7 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
     /// Fallback fetch using the /currently-playing endpoint, which returns only the
     /// current track item and is more reliably populated than the full /player state.
     private func fetchCurrentlyPlayingTrackFallback() async {
+        if Date() < rateLimitBackoffUntil { return }
         guard let token = await refreshTokenIfNeeded(),
               let url = URL(string: "https://api.spotify.com/v1/me/player/currently-playing") else { return }
 
@@ -576,8 +657,20 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else { return }
+              let httpResponse = response as? HTTPURLResponse else { return }
+
+        if httpResponse.statusCode == 429 {
+            handleRateLimit(response: httpResponse)
+            return
+        }
+
+        if httpResponse.statusCode == 204 {
+            self.isPlaying = false
+            return
+        }
+
+        guard httpResponse.statusCode == 200 else { return }
+        self.isDeviceIdle = false
 
         // The currently-playing response wraps item at the top level (same shape as SpotifyPlaybackState)
         if let state = try? JSONDecoder().decode(SpotifyPlaybackState.self, from: data) {
@@ -652,6 +745,7 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
 
     @discardableResult
     func fetchAvailableDevices() async -> [SpotifyDeviceItem] {
+        if Date() < rateLimitBackoffUntil { return self.availableDevices }
         guard let token = await refreshTokenIfNeeded(),
               let url = URL(string: "https://api.spotify.com/v1/me/player/devices") else {
             return []
@@ -661,8 +755,16 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode),
+              let httpResponse = response as? HTTPURLResponse else {
+            return []
+        }
+
+        if httpResponse.statusCode == 429 {
+            handleRateLimit(response: httpResponse)
+            return self.availableDevices
+        }
+
+        guard (200...299).contains(httpResponse.statusCode),
               let decoded = try? JSONDecoder().decode(SpotifyDevicesResponse.self, from: data) else {
             return []
         }
@@ -780,6 +882,7 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
 
     func fetchTrack(id: String) async -> SpotifyTrackItem? {
+        if Date() < rateLimitBackoffUntil { return nil }
         guard let token = await refreshTokenIfNeeded() else { return nil }
         guard let url = URL(string: "https://api.spotify.com/v1/tracks/\(id)") else { return nil }
         var request = URLRequest(url: url)
@@ -787,19 +890,23 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 401 {
-                if let refreshedToken = await refreshTokenIfNeeded(force: true) {
-                    var retryRequest = URLRequest(url: url)
-                    retryRequest.setValue("Bearer \(refreshedToken)", forHTTPHeaderField: "Authorization")
-                    let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
-                    if let retryHttp = retryResponse as? HTTPURLResponse, (200...299).contains(retryHttp.statusCode) {
-                        return try JSONDecoder().decode(SpotifyTrackItem.self, from: retryData)
-                    }
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 429 {
+                    handleRateLimit(response: httpResponse)
+                    return nil
                 }
-                return nil
-            }
-            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                return nil
+                if httpResponse.statusCode == 401 {
+                    if let refreshedToken = await refreshTokenIfNeeded(force: true) {
+                        var retryRequest = URLRequest(url: url)
+                        retryRequest.setValue("Bearer \(refreshedToken)", forHTTPHeaderField: "Authorization")
+                        let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
+                        if let retryHttp = retryResponse as? HTTPURLResponse, (200...299).contains(retryHttp.statusCode) {
+                            return try JSONDecoder().decode(SpotifyTrackItem.self, from: retryData)
+                        }
+                    }
+                    return nil
+                }
+                guard (200...299).contains(httpResponse.statusCode) else { return nil }
             }
             return try JSONDecoder().decode(SpotifyTrackItem.self, from: data)
         } catch {
@@ -808,6 +915,7 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
 
     func fetchQueue() async -> [SpotifyTrackItem] {
+        if Date() < rateLimitBackoffUntil { return [] }
         guard let token = await refreshTokenIfNeeded(),
               let url = URL(string: "https://api.spotify.com/v1/me/player/queue") else {
             return []
@@ -818,20 +926,24 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 401 {
-                if let refreshedToken = await refreshTokenIfNeeded(force: true) {
-                    var retryRequest = URLRequest(url: url)
-                    retryRequest.setValue("Bearer \(refreshedToken)", forHTTPHeaderField: "Authorization")
-                    let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
-                    if let retryHttp = retryResponse as? HTTPURLResponse, (200...299).contains(retryHttp.statusCode) {
-                        let decoded = try JSONDecoder().decode(SpotifyQueueResponse.self, from: retryData)
-                        return decoded.queue ?? []
-                    }
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 429 {
+                    handleRateLimit(response: httpResponse)
+                    return []
                 }
-                return []
-            }
-            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                return []
+                if httpResponse.statusCode == 401 {
+                    if let refreshedToken = await refreshTokenIfNeeded(force: true) {
+                        var retryRequest = URLRequest(url: url)
+                        retryRequest.setValue("Bearer \(refreshedToken)", forHTTPHeaderField: "Authorization")
+                        let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
+                        if let retryHttp = retryResponse as? HTTPURLResponse, (200...299).contains(retryHttp.statusCode) {
+                            let decoded = try JSONDecoder().decode(SpotifyQueueResponse.self, from: retryData)
+                            return decoded.queue ?? []
+                        }
+                    }
+                    return []
+                }
+                guard (200...299).contains(httpResponse.statusCode) else { return [] }
             }
             let decoded = try JSONDecoder().decode(SpotifyQueueResponse.self, from: data)
             return decoded.queue ?? []
@@ -841,6 +953,7 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
 
     func fetchRecentlyPlayedTrack() async -> SpotifyTrackItem? {
+        if Date() < rateLimitBackoffUntil { return nil }
         guard let token = await refreshTokenIfNeeded(),
               let url = URL(string: "https://api.spotify.com/v1/me/player/recently-played?limit=1") else {
             return nil
@@ -851,8 +964,12 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                return nil
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 429 {
+                    handleRateLimit(response: httpResponse)
+                    return nil
+                }
+                guard (200...299).contains(httpResponse.statusCode) else { return nil }
             }
             let decoded = try JSONDecoder().decode(SpotifyRecentlyPlayedResponse.self, from: data)
             return decoded.items?.first?.track
@@ -979,6 +1096,10 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
 
     @discardableResult
     private func sendPlayerCommand(endpoint: String, method: String, body: Data? = nil) async -> (success: Bool, statusCode: Int) {
+        if Date() < rateLimitBackoffUntil {
+            return (false, 429)
+        }
+
         guard let token = await refreshTokenIfNeeded() else {
             return (false, 401)
         }
@@ -1003,12 +1124,21 @@ final class SpotifyService: NSObject, ObservableObject, ASWebAuthenticationPrese
                 return (false, -1)
             }
 
+            if httpResponse.statusCode == 429 {
+                handleRateLimit(response: httpResponse)
+                return (false, 429)
+            }
+
             if httpResponse.statusCode == 401 {
                 if let newToken = await refreshTokenIfNeeded(force: true) {
                     var retryRequest = request
                     retryRequest.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
                     if let (_, retryResp) = try? await URLSession.shared.data(for: retryRequest),
                        let retryHttp = retryResp as? HTTPURLResponse {
+                        if retryHttp.statusCode == 429 {
+                            handleRateLimit(response: retryHttp)
+                            return (false, 429)
+                        }
                         return ((200...299).contains(retryHttp.statusCode), retryHttp.statusCode)
                     }
                 }

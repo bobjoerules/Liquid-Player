@@ -14,6 +14,20 @@ private var isMac: Bool {
     return isMacPlatform
 }
 
+private func formatRemainingSeconds(_ totalSeconds: Int) -> String {
+    if totalSeconds >= 3600 {
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        return "\(hours)h \(minutes)m"
+    } else if totalSeconds >= 60 {
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        return "\(minutes)m \(seconds)s"
+    } else {
+        return "\(totalSeconds)s"
+    }
+}
+
 struct ContentView: View {
     private enum AppTab: Hashable {
         case nowPlaying
@@ -42,6 +56,8 @@ struct ContentView: View {
     @State private var viewingTTMLSong: LibrarySong? = nil
     @State private var isShowingQueue = false
     @State private var isShowingSpicyConnect = false
+    @State private var isShowingTTMLImporter = false
+    @State private var targetSongForTTMLImport: LibrarySong? = nil
     @State private var isAppLoading: Bool = true
     @State private var logoScale: CGFloat = 0.85
     @State private var logoOpacity: Double = 0.0
@@ -55,6 +71,10 @@ struct ContentView: View {
                 .sheet(item: $viewingTTMLSong) { song in
                     TTMLViewerSheet(
                         song: song,
+                        onUpload: {
+                            targetSongForTTMLImport = song
+                            isShowingTTMLImporter = true
+                        },
                         onDelete: {
                             viewModel.deleteSavedTTML(for: song.id)
                         }
@@ -64,6 +84,24 @@ struct ContentView: View {
                     SpicyLyricsConnectSheet(viewModel: viewModel)
                         .presentationDetents([.fraction(0.85), .large])
                         .presentationDragIndicator(.visible)
+                }
+                .fileImporter(
+                    isPresented: $isShowingTTMLImporter,
+                    allowedContentTypes: [
+                        UTType(filenameExtension: "ttml") ?? .xml,
+                        .xml,
+                        .plainText
+                    ],
+                    allowsMultipleSelection: true
+                ) { result in
+                    switch result {
+                    case .success(let urls):
+                        for url in urls {
+                            viewModel.importLocalTTML(url: url, targetTrackId: targetSongForTTMLImport?.id)
+                        }
+                    case .failure(let error):
+                        viewModel.errorMessage = "Import cancelled: \(error.localizedDescription)"
+                    }
                 }
                 .background {
                     Button("") {
@@ -78,6 +116,33 @@ struct ContentView: View {
                         isFullScreenControlsHidden = false
                     }
                 }
+
+            if let toast = viewModel.importToastMessage {
+                VStack {
+                    Spacer()
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.green)
+                        Text(toast)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color.black.opacity(0.85)))
+                    .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
+                    .padding(.bottom, isFullScreenNowPlaying ? 40 : 80)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                            withAnimation {
+                                viewModel.importToastMessage = nil
+                            }
+                        }
+                    }
+                }
+                .zIndex(200)
+            }
 
             if isAppLoading {
                 appLoadingView
@@ -214,6 +279,8 @@ struct ContentView: View {
     private var nowPlayingPage: some View {
         VStack(alignment: .leading, spacing: 16) {
             topBar(title: "Now Playing")
+
+            spotifyStatusBanner
 
             if viewModel.selectedTrackID != nil && viewModel.lines.isEmpty && !viewModel.isLoadingLyrics {
                 Spacer()
@@ -388,8 +455,28 @@ struct ContentView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 16) {
                 // Header: Apple Music Large Title & Actions
-                topBar(title: "Library", subtitle: "Played in last 30 days")
-                    .padding(.top, 8)
+                topBar(title: "Library", subtitle: "Played in last 30 days") {
+                    Button {
+                        targetSongForTTMLImport = nil
+                        isShowingTTMLImporter = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.up.doc.fill")
+                                .font(.system(size: isMac ? 14 : 12, weight: .semibold))
+                            Text("Upload TTML")
+                                .font(.system(size: isMac ? 13 : 11, weight: .bold))
+                        }
+                        .foregroundStyle(Color.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule().fill(colorScheme == .light ? Color.black.opacity(0.06) : Color.white.opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Upload TTML files locally")
+                }
+                .padding(.top, 8)
 
                 // Outdated TTML Notice (Only shown if songs actually need update!)
                 if !libraryManager.songsNeedingTTMLUpdate.isEmpty {
@@ -509,6 +596,10 @@ struct ContentView: View {
                                     },
                                     onViewTTML: {
                                         viewingTTMLSong = song
+                                    },
+                                    onUploadTTML: {
+                                        targetSongForTTMLImport = song
+                                        isShowingTTMLImporter = true
                                     },
                                     onDeleteTTML: {
                                         viewModel.deleteSavedTTML(for: song.id)
@@ -677,6 +768,90 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private var spotifyStatusBanner: some View {
+        if viewModel.spotifyService.isRateLimited {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.yellow)
+                        .font(.system(size: 14))
+                    Text("Spotify rate-limited: resuming in \(formatRemainingSeconds(viewModel.spotifyService.rateLimitRetryAfter))")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.primary)
+                    Spacer()
+                }
+                if viewModel.spotifyService.rateLimitRetryAfter > 180 {
+                    Text("Bypass this wait immediately by adding your own Spotify Client ID in Settings > API Configuration.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.yellow.opacity(0.3), lineWidth: 1)
+            )
+            .padding(.horizontal, 16)
+        } else if viewModel.spotifyService.sessionNeedsReauth {
+            HStack(spacing: 8) {
+                Image(systemName: "person.crop.circle.badge.exclamationmark")
+                    .foregroundColor(.orange)
+                    .font(.system(size: 14))
+                Text("Spotify session expired.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.primary)
+                Spacer()
+                Button {
+                    viewModel.spotifyService.login()
+                } label: {
+                    Text("Reconnect")
+                        .font(.system(size: 12, weight: .bold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color(red: 0.11, green: 0.73, blue: 0.33), in: Capsule())
+                        .foregroundColor(.white)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+            )
+            .padding(.horizontal, 16)
+        } else if viewModel.spotifyService.isDeviceIdle && !viewModel.spotifyService.isPlaying && viewModel.selectedTrackID != nil {
+            HStack(spacing: 8) {
+                Image(systemName: "pause.circle")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 13))
+                Text("Spotify is idle. Play music in Spotify to resume sync.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button {
+                    openSpotifyApp()
+                } label: {
+                    Text("Open Spotify")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(colorScheme == .light ? Color.black.opacity(0.08) : Color.white.opacity(0.12), in: Capsule())
+                        .foregroundColor(.primary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 16)
+        }
+    }
+
     // MARK: - Top Bar
     private func topBar<Trailing: View>(
         title: String,
@@ -708,6 +883,20 @@ struct ContentView: View {
                 trailing()
 
                 if title == "Now Playing" {
+                    Button {
+                        targetSongForTTMLImport = nil
+                        isShowingTTMLImporter = true
+                    } label: {
+                        Image(systemName: "arrow.up.doc")
+                            .font(.system(size: isMac ? 16 : 14, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: isMac ? 44 : 38, height: isMac ? 44 : 38)
+                            .modifier(MiniPlayerButtonBackgroundModifier())
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(LiquidScaleButtonStyle())
+                    .help("Upload Local TTML Lyrics")
+
                     Button {
                         isShowingSpicyConnect = true
                     } label: {
@@ -879,16 +1068,18 @@ struct ContentView: View {
     }
 
     private var compactArtworkView: some View {
-        Group {
+        ZStack {
             #if canImport(UIKit)
-            if viewModel.isMotionArtworkEnabled, let motionURL = viewModel.motionArtworkURL {
-                MotionArtworkPlayerView(streamURL: motionURL)
-            } else if let artwork = viewModel.artwork {
+            if let artwork = viewModel.artwork {
                 Image(uiImage: artwork)
                     .resizable()
                     .scaledToFill()
             } else {
                 artworkFallback
+            }
+
+            if viewModel.isMotionArtworkEnabled, let motionURL = viewModel.motionArtworkURL {
+                MotionArtworkPlayerView(streamURL: motionURL, placeholder: viewModel.artwork)
             }
             #else
             artworkFallback
@@ -899,16 +1090,18 @@ struct ContentView: View {
     }
 
     private var artworkView: some View {
-        Group {
+        ZStack {
             #if canImport(UIKit)
-            if viewModel.isMotionArtworkEnabled, let motionURL = viewModel.motionArtworkURL {
-                MotionArtworkPlayerView(streamURL: motionURL)
-            } else if let artwork = viewModel.artwork {
+            if let artwork = viewModel.artwork {
                 Image(uiImage: artwork)
                     .resizable()
                     .scaledToFill()
             } else {
                 artworkFallback
+            }
+
+            if viewModel.isMotionArtworkEnabled, let motionURL = viewModel.motionArtworkURL {
+                MotionArtworkPlayerView(streamURL: motionURL, placeholder: viewModel.artwork)
             }
             #else
             artworkFallback
@@ -1388,16 +1581,18 @@ struct ContentView: View {
 
     private func dynamicArtworkView(size: CGFloat) -> some View {
         let cornerRadius = min(max(size * 0.055, 10), 24)
-        return Group {
+        return ZStack {
             #if canImport(UIKit)
-            if viewModel.isMotionArtworkEnabled, let motionURL = viewModel.motionArtworkURL {
-                MotionArtworkPlayerView(streamURL: motionURL)
-            } else if let artwork = viewModel.artwork {
+            if let artwork = viewModel.artwork {
                 Image(uiImage: artwork)
                     .resizable()
                     .scaledToFill()
             } else {
                 dynamicFallback(size: size)
+            }
+
+            if viewModel.isMotionArtworkEnabled, let motionURL = viewModel.motionArtworkURL {
+                MotionArtworkPlayerView(streamURL: motionURL, placeholder: viewModel.artwork)
             }
             #else
             dynamicFallback(size: size)
@@ -1765,34 +1960,37 @@ private struct PlayerBackgroundView: View {
                         )
 
                         // 2. High-vibrancy blurred artwork (or motion artwork)
-                        if let motionURL {
-                            MotionArtworkPlayerView(streamURL: motionURL)
-                                .frame(width: size.width, height: size.height)
-                                .scaleEffect(1.30)
-                                .blur(radius: 60)
-                                .saturation(1.15)
-                                .contrast(1.02)
-                                .opacity(isLight ? 0.35 : 0.50)
-                                .clipped()
-                        } else if let artwork {
-                            Image(uiImage: artwork)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: size.width, height: size.height)
-                                .scaleEffect(1.30)
-                                .blur(radius: 65)
-                                .saturation(1.15)
-                                .contrast(1.02)
-                                .opacity(isLight ? 0.35 : 0.50)
-                                .clipped()
-                        } else {
-                            LinearGradient(
-                                colors: isLight
-                                    ? [Color(red: 0.94, green: 0.95, blue: 0.98), Color(uiColor: .systemBackground)]
-                                    : [Color(red: 0.08, green: 0.08, blue: 0.12), Color.black],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
+                        ZStack {
+                            if let artwork {
+                                Image(uiImage: artwork)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: size.width, height: size.height)
+                                    .scaleEffect(1.30)
+                                    .blur(radius: 65)
+                                    .saturation(1.15)
+                                    .contrast(1.02)
+                                    .opacity(isLight ? 0.35 : 0.50)
+                                    .clipped()
+                            }
+                            if let motionURL {
+                                MotionArtworkPlayerView(streamURL: motionURL, placeholder: artwork)
+                                    .frame(width: size.width, height: size.height)
+                                    .scaleEffect(1.30)
+                                    .blur(radius: 60)
+                                    .saturation(1.15)
+                                    .contrast(1.02)
+                                    .opacity(isLight ? 0.35 : 0.50)
+                                    .clipped()
+                            } else if artwork == nil {
+                                LinearGradient(
+                                    colors: isLight
+                                        ? [Color(red: 0.94, green: 0.95, blue: 0.98), Color(uiColor: .systemBackground)]
+                                        : [Color(red: 0.08, green: 0.08, blue: 0.12), Color.black],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            }
                         }
 
                         // 3. Apple Music-style contrast scrim that ensures high legibility and rich deep tones
@@ -1883,15 +2081,30 @@ private struct MotionArtworkBackgroundView: View {
                     endPoint: .bottomTrailing
                 )
 
-                // High-vibrancy motion video
-                MotionArtworkPlayerView(streamURL: motionURL)
-                    .frame(width: size.width, height: size.height)
-                    .scaleEffect(1.30)
-                    .blur(radius: 55)
-                    .saturation(1.15)
-                    .contrast(1.02)
-                    .opacity(isLight ? 0.38 : 0.52)
-                    .clipped()
+                // High-vibrancy motion video with artwork underlay
+                ZStack {
+                    if let artwork {
+                        Image(uiImage: artwork)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: size.width, height: size.height)
+                            .scaleEffect(1.30)
+                            .blur(radius: 55)
+                            .saturation(1.15)
+                            .contrast(1.02)
+                            .opacity(isLight ? 0.38 : 0.52)
+                            .clipped()
+                    }
+
+                    MotionArtworkPlayerView(streamURL: motionURL, placeholder: artwork)
+                        .frame(width: size.width, height: size.height)
+                        .scaleEffect(1.30)
+                        .blur(radius: 55)
+                        .saturation(1.15)
+                        .contrast(1.02)
+                        .opacity(isLight ? 0.38 : 0.52)
+                        .clipped()
+                }
 
                 // Protective scrim
                 Rectangle()
@@ -2241,20 +2454,38 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Account Status")
                             .font(.system(size: isMac ? 17 : 15, weight: .semibold))
-                        Text(viewModel.spotifyService.isAuthenticated ? "Connected" : "Not Connected")
-                            .font(.system(size: isMac ? 15 : 13))
-                            .foregroundStyle(viewModel.spotifyService.isAuthenticated ? Color(red: 0.11, green: 0.85, blue: 0.45) : .secondary)
+                        if viewModel.spotifyService.sessionNeedsReauth {
+                            Text("Session Expired — Reconnect Required")
+                                .font(.system(size: isMac ? 15 : 13, weight: .medium))
+                                .foregroundStyle(.orange)
+                        } else if viewModel.spotifyService.isRateLimited {
+                            Text("Rate limited (resuming in \(formatRemainingSeconds(viewModel.spotifyService.rateLimitRetryAfter)))")
+                                .font(.system(size: isMac ? 15 : 13, weight: .medium))
+                                .foregroundStyle(.yellow)
+                        } else {
+                            Text(viewModel.spotifyService.isAuthenticated ? "Connected" : "Not Connected")
+                                .font(.system(size: isMac ? 15 : 13))
+                                .foregroundStyle(viewModel.spotifyService.isAuthenticated ? Color(red: 0.11, green: 0.85, blue: 0.45) : .secondary)
+                        }
                     }
 
                     Spacer()
 
-                    if viewModel.spotifyService.isAuthenticated {
+                    if viewModel.spotifyService.sessionNeedsReauth {
+                        Button("Reconnect") {
+                            applySpotifyConfig()
+                            viewModel.spotifyService.login()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                    } else if viewModel.spotifyService.isAuthenticated {
                         Button("Disconnect", role: .destructive) {
                             viewModel.spotifyService.logout()
                         }
                         .buttonStyle(.bordered)
                     } else {
                         Button("Connect") {
+                            applySpotifyConfig()
                             viewModel.spotifyService.login()
                         }
                         .buttonStyle(.borderedProminent)
@@ -2432,13 +2663,23 @@ struct SettingsView: View {
                         .padding(.vertical, 2)
                 }
 
+                Toggle("Special Word Effects", isOn: $viewModel.isSpecialWordEffectsEnabled)
+                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
+                if viewModel.isSpecialWordEffectsEnabled {
+                    Text("Words like 'fire', 'christmas', 'night', 'sun', and 'rainbow' feature dynamic visual styling while singing.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 2)
+                }
+
                 if viewModel.isRainbowColorMode {
                     Text("Rainbow preset is active. Each lyric line cycles through a different rainbow color.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 2)
                 } else if viewModel.isArtworkColorMode {
-                    Text("Album Art preset is active. Lyric color automatically matches each song's album artwork.")
+                    Text("Album Art preset is active. Lyric color automatically matches each song's album artwork (and duet uses the secondary artwork tone).")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 2)
@@ -2591,9 +2832,13 @@ struct SettingsView: View {
                 }
 
                 Button("Save Configuration") {
+                    let oldClientId = APIConfig.spotifyClientId
                     viewModel.saveSpicyLyricsApiKey(spicyLyricsKey)
-                    APIConfig.spotifyClientId = spotifyClientId
-                    APIConfig.spotifyClientSecret = spotifyClientSecret
+                    applySpotifyConfig()
+                    if oldClientId != APIConfig.spotifyClientId {
+                        // Client ID changed! Reconnect with new Client ID
+                        viewModel.spotifyService.login()
+                    }
                     isSavedAlertPresented = true
                 }
                 .font(.system(size: isMac ? 16 : 14, weight: .semibold))
@@ -2605,6 +2850,7 @@ struct SettingsView: View {
                     spicyLyricsKey = APIConfig.spicyLyricsApiKey
                     spotifyClientId = APIConfig.spotifyClientId
                     spotifyClientSecret = APIConfig.spotifyClientSecret
+                    viewModel.spotifyService.disconnect()
                     isSavedAlertPresented = true
                 }
                 .font(.system(size: isMac ? 15 : 13))
@@ -2638,6 +2884,19 @@ struct SettingsView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text("Your API configuration has been safely updated.")
+        }
+    }
+
+    private func applySpotifyConfig() {
+        let trimmedClientId = spotifyClientId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedClientSecret = spotifyClientSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        let changed = (APIConfig.spotifyClientId != trimmedClientId)
+        APIConfig.spotifyClientId = trimmedClientId
+        APIConfig.spotifyClientSecret = trimmedClientSecret
+        spotifyClientId = APIConfig.spotifyClientId
+        spotifyClientSecret = APIConfig.spotifyClientSecret
+        if changed {
+            viewModel.spotifyService.disconnect()
         }
     }
 
@@ -2698,6 +2957,9 @@ struct SettingsView: View {
                 }
                 return colorScheme == .light ? "#000000" : "#FFFFFF"
             }
+            if viewModel.isArtworkColorMode {
+                return viewModel.artworkDuetHex(for: colorScheme)
+            }
             return "#38BDF8"
         }()
         return HStack {
@@ -2712,6 +2974,9 @@ struct SettingsView: View {
                     get: {
                         if voiceKey == "v1" && viewModel.isArtworkColorMode {
                             return viewModel.artworkHex(for: colorScheme)
+                        }
+                        if voiceKey == "v2" && viewModel.isArtworkColorMode {
+                            return viewModel.artworkDuetHex(for: colorScheme)
                         }
                         return LyricColorPreset.resolveAdaptiveHex(viewModel.voiceColors[voiceKey] ?? defaultHex, for: colorScheme)
                     },
@@ -2976,6 +3241,7 @@ struct LibrarySongRowView: View {
     let onPlay: () -> Void
     let onUpdateTTML: () -> Void
     let onViewTTML: () -> Void
+    var onUploadTTML: (() -> Void)? = nil
     var onDeleteTTML: (() -> Void)? = nil
 
     @State private var showingDeleteAlert = false
@@ -3057,6 +3323,12 @@ struct LibrarySongRowView: View {
                         }
                     }
 
+                    if onUploadTTML != nil {
+                        Button(action: { onUploadTTML?() }) {
+                            Label("Upload TTML File", systemImage: "arrow.up.doc")
+                        }
+                    }
+
                     Button(action: onUpdateTTML) {
                         Label(song.needsUpdate ? "Update TTML Lyrics" : "Refresh Lyrics", systemImage: "arrow.triangle.2.circlepath")
                     }
@@ -3096,6 +3368,12 @@ struct LibrarySongRowView: View {
                 }
             }
 
+            if onUploadTTML != nil {
+                Button(action: { onUploadTTML?() }) {
+                    Label("Upload TTML File", systemImage: "arrow.up.doc")
+                }
+            }
+
             Button(action: onUpdateTTML) {
                 Label(song.needsUpdate ? "Update TTML Lyrics" : "Refresh Lyrics", systemImage: "arrow.triangle.2.circlepath")
             }
@@ -3122,6 +3400,7 @@ struct LibrarySongRowView: View {
 
 struct TTMLViewerSheet: View {
     let song: LibrarySong
+    var onUpload: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -3191,6 +3470,17 @@ struct TTMLViewerSheet: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     HStack(spacing: 14) {
+                        if let onUpload = onUpload {
+                            Button {
+                                onUpload()
+                            } label: {
+                                Image(systemName: "arrow.up.doc")
+                                    .font(.system(size: isMacPlatform ? 15 : 13, weight: .medium))
+                                    .foregroundStyle(.primary)
+                            }
+                            .help("Upload / Replace TTML")
+                        }
+
                         if onDelete != nil {
                             Button(role: .destructive) {
                                 showingDeleteAlert = true
@@ -3656,6 +3946,7 @@ private struct LyricsPanelView: View {
             isBounceEnabled: viewModel.isLyricsBounceEnabled,
             activeColor: lineColor,
             isExactColorEnabled: viewModel.isExactColorEnabled,
+            isSpecialWordEffectsEnabled: viewModel.isSpecialWordEffectsEnabled,
             isSongUnsynced: viewModel.isCurrentSongUnsynced,
             isPlaying: viewModel.isPlaying,
             onSeek: { seekMs in

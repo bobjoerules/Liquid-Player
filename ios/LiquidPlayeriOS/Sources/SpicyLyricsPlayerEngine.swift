@@ -136,12 +136,16 @@ enum ColorWordsLookup {
     static let colorMap: [String: Color] = [
         "red": Color(red: 0.95, green: 0.22, blue: 0.22),
         "reds": Color(red: 0.95, green: 0.22, blue: 0.22),
+        "redder": Color(red: 0.95, green: 0.22, blue: 0.22),
+        "reddest": Color(red: 0.95, green: 0.22, blue: 0.22),
         "crimson": Color(red: 0.86, green: 0.08, blue: 0.24),
         "scarlet": Color(red: 1.0, green: 0.14, blue: 0.0),
         "ruby": Color(red: 0.88, green: 0.07, blue: 0.37),
         "rose": Color(red: 1.0, green: 0.30, blue: 0.50),
         "pink": Color(red: 1.0, green: 0.42, blue: 0.63),
         "pinks": Color(red: 1.0, green: 0.42, blue: 0.63),
+        "pinker": Color(red: 1.0, green: 0.42, blue: 0.63),
+        "pinkest": Color(red: 1.0, green: 0.42, blue: 0.63),
         "magenta": Color(red: 1.0, green: 0.0, blue: 1.0),
         "fuchsia": Color(red: 1.0, green: 0.0, blue: 1.0),
         "orange": Color(red: 1.0, green: 0.55, blue: 0.0),
@@ -151,10 +155,14 @@ enum ColorWordsLookup {
         "peach": Color(red: 1.0, green: 0.80, blue: 0.64),
         "yellow": Color(red: 1.0, green: 0.88, blue: 0.10),
         "yellows": Color(red: 1.0, green: 0.88, blue: 0.10),
+        "yellower": Color(red: 1.0, green: 0.88, blue: 0.10),
+        "yellowest": Color(red: 1.0, green: 0.88, blue: 0.10),
         "gold": Color(red: 1.0, green: 0.84, blue: 0.0),
         "golden": Color(red: 1.0, green: 0.84, blue: 0.0),
         "green": Color(red: 0.20, green: 0.82, blue: 0.38),
         "greens": Color(red: 0.20, green: 0.82, blue: 0.38),
+        "greener": Color(red: 0.20, green: 0.82, blue: 0.38),
+        "greenest": Color(red: 0.20, green: 0.82, blue: 0.38),
         "lime": Color(red: 0.65, green: 0.95, blue: 0.20),
         "emerald": Color(red: 0.31, green: 0.78, blue: 0.47),
         "teal": Color(red: 0.0, green: 0.72, blue: 0.72),
@@ -163,6 +171,8 @@ enum ColorWordsLookup {
         "turquoise": Color(red: 0.25, green: 0.88, blue: 0.82),
         "blue": Color(red: 0.20, green: 0.60, blue: 1.0),
         "blues": Color(red: 0.20, green: 0.60, blue: 1.0),
+        "bluer": Color(red: 0.20, green: 0.60, blue: 1.0),
+        "bluest": Color(red: 0.20, green: 0.60, blue: 1.0),
         "navy": Color(red: 0.15, green: 0.35, blue: 0.80),
         "sapphire": Color(red: 0.06, green: 0.38, blue: 0.85),
         "indigo": Color(red: 0.35, green: 0.25, blue: 0.90),
@@ -174,15 +184,27 @@ enum ColorWordsLookup {
         "lilac": Color(red: 0.80, green: 0.58, blue: 0.90),
         "brown": Color(red: 0.65, green: 0.42, blue: 0.25),
         "browns": Color(red: 0.65, green: 0.42, blue: 0.25),
+        "browner": Color(red: 0.65, green: 0.42, blue: 0.25),
+        "brownest": Color(red: 0.65, green: 0.42, blue: 0.25),
         "maroon": Color(red: 0.60, green: 0.10, blue: 0.15),
         "burgundy": Color(red: 0.55, green: 0.05, blue: 0.20),
         "bronze": Color(red: 0.80, green: 0.50, blue: 0.20),
         "white": Color.white,
+        "whiter": Color.white,
+        "whitest": Color.white,
         "black": Color(white: 0.15),
+        "blacker": Color(white: 0.15),
+        "blackest": Color(white: 0.15),
         "gray": Color(white: 0.65),
         "grey": Color(white: 0.65),
+        "grayer": Color(white: 0.65),
+        "greyer": Color(white: 0.65),
+        "grayest": Color(white: 0.65),
+        "greyest": Color(white: 0.65),
         "silver": Color(red: 0.75, green: 0.78, blue: 0.85),
-        "platinum": Color(red: 0.88, green: 0.90, blue: 0.95)
+        "platinum": Color(red: 0.88, green: 0.90, blue: 0.95),
+        "diamond": Color(red: 0.72, green: 0.93, blue: 1.0),
+        "diamonds": Color(red: 0.72, green: 0.93, blue: 1.0)
     ]
 
     static func color(for rawText: String) -> Color? {
@@ -1050,7 +1072,7 @@ struct SpicyLyricLineView: View, Equatable {
                                 } else if isLinePast {
                                     return line.isBackground ? cw.opacity(0.80) : cw
                                 } else {
-                                    return cw.opacity(line.isBackground ? 0.30 : 0.40)
+                                    return baseColor
                                 }
                             }
                             return baseColor

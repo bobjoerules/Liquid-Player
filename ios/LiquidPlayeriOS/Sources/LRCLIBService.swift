@@ -274,7 +274,7 @@ actor LRCLIBService {
                 }
             }
         }
-        return result
+        return BackgroundVocalsEngine.processLines(result)
     }
 
     private func parsePlain(_ plainLyrics: String) -> [LyricLine] {
@@ -297,6 +297,6 @@ actor LRCLIBService {
                 )
             )
         }
-        return result
+        return BackgroundVocalsEngine.processLines(result)
     }
 }

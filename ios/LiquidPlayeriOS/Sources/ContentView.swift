@@ -2667,7 +2667,17 @@ struct SettingsView: View {
                     .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
 
                 if viewModel.isSpecialWordEffectsEnabled {
-                    Text("Words like 'fire', 'christmas', 'night', 'sun', and 'rainbow' feature dynamic visual styling while singing.")
+                    Text("Words like 'fire', 'cold', 'summer', 'diamond', 'christmas', 'night', and 'sun' feature dynamic visual styling while singing.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 2)
+                }
+
+                Toggle("Bleep N-Word (****)", isOn: $viewModel.isBleepNWordEnabled)
+                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
+                if viewModel.isBleepNWordEnabled {
+                    Text("Replaces occurrences of the n-word in lyrics with 4 stars (****).")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 2)

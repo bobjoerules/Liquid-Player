@@ -105,6 +105,7 @@ struct LyricColorPreset: Identifiable, Hashable {
             ),
             LyricColorPreset(id: "green", name: "Spotify Green", hex: "#1DB954"),
             LyricColorPreset(id: "cyan", name: "Cyan", hex: "#38BDF8"),
+            LyricColorPreset(id: "diamond", name: "Diamond", hex: "#B9F2FF"),
             LyricColorPreset(id: "purple", name: "Purple", hex: "#C084FC"),
             LyricColorPreset(id: "coral", name: "Coral", hex: "#FB7185"),
             LyricColorPreset(id: "gold", name: "Gold", hex: "#FBBF24"),
@@ -497,7 +498,18 @@ final class PlayerViewModel: ObservableObject {
     }
 
     // MARK: - Published Properties
+    private var rawLines: [LyricLine] = []
     @Published var lines: [LyricLine] = []
+
+    func setLyricsLines(_ newLines: [LyricLine]) {
+        let processedLines = BackgroundVocalsEngine.processLines(newLines)
+        self.rawLines = processedLines
+        self.lines = isBleepNWordEnabled ? LyricsCensorEngine.censorLines(processedLines) : processedLines
+    }
+
+    private func applyLyricsCensorFilter() {
+        self.lines = isBleepNWordEnabled ? LyricsCensorEngine.censorLines(rawLines) : rawLines
+    }
     @Published var durationMs: Int = 0
     @Published var isPlaying: Bool = false
     #if canImport(UIKit)
@@ -672,6 +684,13 @@ final class PlayerViewModel: ObservableObject {
     @Published var isSpecialWordEffectsEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isSpecialWordEffectsEnabled") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(isSpecialWordEffectsEnabled, forKey: "LiquidPlayeriOS.isSpecialWordEffectsEnabled")
+        }
+    }
+
+    @Published var isBleepNWordEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isBleepNWordEnabled") as? Bool ?? false {
+        didSet {
+            UserDefaults.standard.set(isBleepNWordEnabled, forKey: "LiquidPlayeriOS.isBleepNWordEnabled")
+            applyLyricsCensorFilter()
         }
     }
 
@@ -988,7 +1007,7 @@ final class PlayerViewModel: ObservableObject {
                     #endif
                     self.motionArtworkURL = nil
                     self.motionArtworkTallURL = nil
-                    self.lines = []
+                    self.setLyricsLines([])
                     self.isPlaying = false
                 }
             }
@@ -1184,7 +1203,7 @@ final class PlayerViewModel: ObservableObject {
             if let cached = lyricsCache[cleanId] {
                 let isSpicySync = (cached.attribution != nil) || (cached.source?.lowercased().contains("spicy") == true)
                 if isSpicySync {
-                    self.lines = cached.lines
+                    self.setLyricsLines(cached.lines)
                     self.isLoadingLyrics = false
                     self.updateLyricsStatus(from: cached)
                     self.lyricsSource = cached.source ?? "Spicy Lyrics"
@@ -1201,7 +1220,7 @@ final class PlayerViewModel: ObservableObject {
                 }
             }
 
-            self.lines = []
+            self.setLyricsLines([])
             Task {
                 await fetchLyricsForTrack(trackId: cleanId, trackTitle: track.name)
             }
@@ -1270,7 +1289,7 @@ final class PlayerViewModel: ObservableObject {
         if let cached = lyricsCache[cleanId] {
             let isSpicySync = (cached.attribution != nil) || (cached.source?.lowercased().contains("spicy") == true)
             if isSpicySync {
-                self.lines = cached.lines
+                self.setLyricsLines(cached.lines)
                 self.isLoadingLyrics = false
                 self.updateLyricsStatus(from: cached)
                 self.lyricsSource = cached.source ?? "Spicy Lyrics"
@@ -1294,7 +1313,7 @@ final class PlayerViewModel: ObservableObject {
                 let isSpicySaved = (parsed.attribution != nil) || (parsed.source?.lowercased().contains("spicy") == true)
                 if isSpicySaved {
                     self.lyricsCache[cleanId] = parsed
-                    self.lines = parsed.lines
+                    self.setLyricsLines(parsed.lines)
                     self.isLoadingLyrics = false
                     self.updateLyricsStatus(from: parsed)
                     self.lyricsSource = parsed.source ?? "Spicy Lyrics (Saved)"
@@ -1319,7 +1338,7 @@ final class PlayerViewModel: ObservableObject {
             let parsed = try await SpicyLyricsService.shared.fetchLyrics(for: cleanId)
             if !parsed.lines.isEmpty {
                 self.lyricsCache[cleanId] = parsed
-                self.lines = parsed.lines
+                self.setLyricsLines(parsed.lines)
                 self.isLoadingLyrics = false
                 self.updateLyricsStatus(from: parsed)
                 self.lyricsSource = parsed.source ?? "Spicy Lyrics"
@@ -1338,7 +1357,7 @@ final class PlayerViewModel: ObservableObject {
         // 4. Use saved fallback if live Spicy Lyrics had no lyrics
         if let saved = fallbackSaved {
             self.lyricsCache[cleanId] = saved
-            self.lines = saved.lines
+            self.setLyricsLines(saved.lines)
             self.isLoadingLyrics = false
             self.updateLyricsStatus(from: saved)
             self.lyricsSource = saved.source ?? "Saved Lyrics"
@@ -1359,7 +1378,7 @@ final class PlayerViewModel: ObservableObject {
             durationSeconds: durationSec
         ), !biniParsed.lines.isEmpty {
             self.lyricsCache[cleanId] = biniParsed
-            self.lines = biniParsed.lines
+            self.setLyricsLines(biniParsed.lines)
             self.isLoadingLyrics = false
             if biniParsed.isStatic {
                 self.lyricsStatus = "Lyrics provided by Apple Music"
@@ -1382,7 +1401,7 @@ final class PlayerViewModel: ObservableObject {
             durationSeconds: durationSec
         ), !lrclibParsed.lines.isEmpty {
             self.lyricsCache[cleanId] = lrclibParsed
-            self.lines = lrclibParsed.lines
+            self.setLyricsLines(lrclibParsed.lines)
             self.isLoadingLyrics = false
             if lrclibParsed.isStatic {
                 self.lyricsStatus = "Lyrics provided by LRCLIB"
@@ -1399,7 +1418,7 @@ final class PlayerViewModel: ObservableObject {
 
         self.isLoadingLyrics = false
         self.lyricsStatus = ""
-        self.lines = []
+        self.setLyricsLines([])
         self.lyricsSource = nil
         self.lyricsAttribution = nil
         self.lyricsSongwriters = []
@@ -1444,7 +1463,7 @@ final class PlayerViewModel: ObservableObject {
             await SpicyLyricsService.shared.clearCache(for: cleanId)
         }
         if currentTrackId == cleanId {
-            lines = []
+            self.setLyricsLines([])
             lyricsStatus = "Saved TTML deleted"
             lyricsSource = nil
             lyricsAttribution = nil
@@ -1529,7 +1548,7 @@ final class PlayerViewModel: ObservableObject {
         let isForCurrent = (currentTrackId == trackId) || (selectedTrackID == trackId) || TrackMatchUtils.titlesMatch(requested: nowPlayingTitle, candidate: resolvedTitle)
         if isForCurrent || currentTrackId == nil {
             self.currentTrackId = trackId
-            self.lines = parsed.lines
+            self.setLyricsLines(parsed.lines)
             self.lyricsSource = "Local TTML"
             self.lyricsAttribution = parsed.attribution
             self.lyricsSongwriters = parsed.songwriters
@@ -1582,7 +1601,7 @@ final class PlayerViewModel: ObservableObject {
                 let parsed = try await SpicyLyricsService.shared.fetchLyrics(for: trackId)
                 if !parsed.lines.isEmpty {
                     self.lyricsCache[trackId] = parsed
-                    self.lines = parsed.lines
+                    self.setLyricsLines(parsed.lines)
                     self.isLoadingLyrics = false
                     self.updateLyricsStatus(from: parsed)
                     self.lyricsSource = parsed.source ?? "Spicy Lyrics"

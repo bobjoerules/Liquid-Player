@@ -21,20 +21,45 @@ public func timecode(_ ms: Int) -> String {
 }
 
 struct LyricLetter: Identifiable, Hashable {
-    let id = UUID()
+    let id: UUID
     let char: String
     let startMs: Int
     let endMs: Int
+
+    init(id: UUID = UUID(), char: String, startMs: Int, endMs: Int) {
+        self.id = id
+        self.char = char
+        self.startMs = startMs
+        self.endMs = endMs
+    }
 }
 
 struct LyricWord: Identifiable, Hashable {
-    let id = UUID()
+    let id: UUID
     let text: String
     let startMs: Int
     let endMs: Int
     let isPartOfWord: Bool
     let isLetterGroup: Bool
     let letters: [LyricLetter]
+
+    init(
+        id: UUID = UUID(),
+        text: String,
+        startMs: Int,
+        endMs: Int,
+        isPartOfWord: Bool = false,
+        isLetterGroup: Bool = false,
+        letters: [LyricLetter] = []
+    ) {
+        self.id = id
+        self.text = text
+        self.startMs = startMs
+        self.endMs = endMs
+        self.isPartOfWord = isPartOfWord
+        self.isLetterGroup = isLetterGroup
+        self.letters = letters
+    }
 
     var duration: Int {
         max(endMs - startMs, 1)
@@ -90,7 +115,7 @@ func groupSpicyWords(_ words: [LyricWord]) -> [SpicyWordGroup] {
 }
 
 struct LyricLine: Identifiable, Hashable {
-    let id = UUID()
+    let id: UUID
     let words: [LyricWord]
     let wordGroups: [SpicyWordGroup]
     let startMs: Int
@@ -108,6 +133,7 @@ struct LyricLine: Identifiable, Hashable {
     let isStatic: Bool
 
     init(
+        id: UUID = UUID(),
         words: [LyricWord] = [],
         startMs: Int,
         lineEndMs: Int? = nil,
@@ -123,6 +149,7 @@ struct LyricLine: Identifiable, Hashable {
         rawText: String? = nil,
         isStatic: Bool = false
     ) {
+        self.id = id
         self.words = words
         self.wordGroups = groupSpicyWords(words)
         self.startMs = startMs
@@ -177,6 +204,539 @@ struct LyricLine: Identifiable, Hashable {
             result += groupText
         }
         return result
+    }
+}
+
+// MARK: - Lyrics Censor Engine
+enum LyricsCensorEngine {
+    private static let nWordRegex: NSRegularExpression = {
+        // Matches forms of the n-word: nigga, niggas, niggaz, niggah, niggahs, nigger, niggers,
+        // n*gga, n***a, n****r, etc.
+        let pattern = #"(?i)\b(n+[i1!*]+g+[a4e3*]+[rshz]*|n+\*{2,}[aerhzs]*)\b"#
+        return try! NSRegularExpression(pattern: pattern, options: [])
+    }()
+
+    static func containsNWord(_ text: String) -> Bool {
+        if text.isEmpty { return false }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return nWordRegex.firstMatch(in: text, options: [], range: range) != nil
+    }
+
+    static func bleepText(_ text: String) -> String {
+        guard !text.isEmpty else { return text }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return nWordRegex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "****")
+    }
+
+    static func censorLine(_ line: LyricLine) -> LyricLine {
+        if line.isInterlude {
+            return line
+        }
+
+        let censoredRaw = line.rawText.map { bleepText($0) }
+        let censoredTrans = line.translation.map { bleepText($0) }
+        let censoredRom = line.romanization.map { bleepText($0) }
+
+        if line.words.isEmpty {
+            return LyricLine(
+                id: line.id,
+                words: [],
+                startMs: line.startMs,
+                lineEndMs: line.lineEndMs,
+                isWordSynced: line.isWordSynced,
+                agent: line.agent,
+                isBackground: line.isBackground,
+                oppositeAligned: line.oppositeAligned,
+                isSongwriter: line.isSongwriter,
+                isInterlude: line.isInterlude,
+                interludeEndMs: line.interludeEndMs,
+                translation: censoredTrans,
+                romanization: censoredRom,
+                rawText: censoredRaw,
+                isStatic: line.isStatic
+            )
+        }
+
+        var newWords: [LyricWord] = []
+        for group in line.wordGroups {
+            let combined = group.words.map(\.text).joined()
+            let cleanedCombined = combined
+                .replacingOccurrences(of: "-", with: "")
+                .replacingOccurrences(of: "–", with: "")
+                .replacingOccurrences(of: "—", with: "")
+
+            let isGroupNWord = containsNWord(cleanedCombined)
+
+            if isGroupNWord {
+                let count = group.words.count
+                if count == 1, let word = group.words.first {
+                    let bleeped = bleepText(word.text)
+                    let newLetters = makeCensoredLetters(word: word, starCount: 4)
+                    newWords.append(LyricWord(
+                        id: word.id,
+                        text: bleeped,
+                        startMs: word.startMs,
+                        endMs: word.endMs,
+                        isPartOfWord: word.isPartOfWord,
+                        isLetterGroup: word.isLetterGroup,
+                        letters: newLetters
+                    ))
+                } else if count == 2 {
+                    // Split across 2 syllables: "**" + "**" = "****"
+                    let w0 = group.words[0]
+                    let w1 = group.words[1]
+                    let w0Hyphen = w0.text.contains("-") ? "-" : ""
+                    let w1Punct = extractTrailingPunctuation(from: w1.text)
+
+                    newWords.append(LyricWord(
+                        id: w0.id,
+                        text: "**" + w0Hyphen,
+                        startMs: w0.startMs,
+                        endMs: w0.endMs,
+                        isPartOfWord: w0.isPartOfWord,
+                        isLetterGroup: w0.isLetterGroup,
+                        letters: makeCensoredLetters(word: w0, starCount: 2)
+                    ))
+                    newWords.append(LyricWord(
+                        id: w1.id,
+                        text: "**" + w1Punct,
+                        startMs: w1.startMs,
+                        endMs: w1.endMs,
+                        isPartOfWord: w1.isPartOfWord,
+                        isLetterGroup: w1.isLetterGroup,
+                        letters: makeCensoredLetters(word: w1, starCount: 2)
+                    ))
+                } else {
+                    // 3 or more syllables: distribute 4 stars across syllables
+                    for (idx, w) in group.words.enumerated() {
+                        let stars = (idx == count - 1 && count == 3) ? "**" : "*"
+                        let starCount = (idx == count - 1 && count == 3) ? 2 : 1
+                        let hyphen = w.text.contains("-") ? "-" : ""
+                        let punct = (idx == count - 1) ? extractTrailingPunctuation(from: w.text) : ""
+                        newWords.append(LyricWord(
+                            id: w.id,
+                            text: stars + hyphen + punct,
+                            startMs: w.startMs,
+                            endMs: w.endMs,
+                            isPartOfWord: w.isPartOfWord,
+                            isLetterGroup: w.isLetterGroup,
+                            letters: makeCensoredLetters(word: w, starCount: starCount)
+                        ))
+                    }
+                }
+            } else {
+                for word in group.words {
+                    if containsNWord(word.text) {
+                        let bleeped = bleepText(word.text)
+                        newWords.append(LyricWord(
+                            id: word.id,
+                            text: bleeped,
+                            startMs: word.startMs,
+                            endMs: word.endMs,
+                            isPartOfWord: word.isPartOfWord,
+                            isLetterGroup: word.isLetterGroup,
+                            letters: makeCensoredLetters(word: word, starCount: 4)
+                        ))
+                    } else {
+                        newWords.append(word)
+                    }
+                }
+            }
+        }
+
+        return LyricLine(
+            id: line.id,
+            words: newWords,
+            startMs: line.startMs,
+            lineEndMs: line.lineEndMs,
+            isWordSynced: line.isWordSynced,
+            agent: line.agent,
+            isBackground: line.isBackground,
+            oppositeAligned: line.oppositeAligned,
+            isSongwriter: line.isSongwriter,
+            isInterlude: line.isInterlude,
+            interludeEndMs: line.interludeEndMs,
+            translation: censoredTrans,
+            romanization: censoredRom,
+            rawText: censoredRaw,
+            isStatic: line.isStatic
+        )
+    }
+
+    private static func extractTrailingPunctuation(from text: String) -> String {
+        let punctChars = CharacterSet.punctuationCharacters.subtracting(CharacterSet(charactersIn: "-–—"))
+        var result = ""
+        for char in text.reversed() {
+            if let scalar = char.unicodeScalars.first, punctChars.contains(scalar) {
+                result = String(char) + result
+            } else {
+                break
+            }
+        }
+        return result
+    }
+
+    private static func makeCensoredLetters(word: LyricWord, starCount: Int) -> [LyricLetter] {
+        guard word.isLetterGroup, starCount > 0 else { return [] }
+        let totalDur = max(word.endMs - word.startMs, starCount)
+        let step = totalDur / starCount
+        return (0..<starCount).map { i in
+            let s = word.startMs + (i * step)
+            let e = (i == starCount - 1) ? word.endMs : (s + step)
+            return LyricLetter(char: "*", startMs: s, endMs: e)
+        }
+    }
+
+    static func censorLines(_ lines: [LyricLine]) -> [LyricLine] {
+        return lines.map { censorLine($0) }
+    }
+}
+
+// MARK: - Background Vocals Engine
+
+enum BackgroundVocalsEngine {
+    static func processLines(_ lines: [LyricLine]) -> [LyricLine] {
+        var result: [LyricLine] = []
+        for line in lines {
+            result.append(contentsOf: processLine(line))
+        }
+        return result
+    }
+
+    static func processLine(_ line: LyricLine) -> [LyricLine] {
+        if line.isInterlude || line.isSongwriter {
+            return [line]
+        }
+
+        if line.isBackground {
+            return [cleanParenthesesFromBackgroundLine(line)]
+        }
+
+        if line.isWordSynced && !line.words.isEmpty {
+            return processWordSyncedLine(line)
+        }
+
+        return processLineSyncedLine(line)
+    }
+
+    private static func cleanParenthesesFromBackgroundLine(_ line: LyricLine) -> LyricLine {
+        var cleanWords = line.words
+        if !cleanWords.isEmpty {
+            cleanWords = cleanWords.compactMap { word in
+                let cleaned = stripSurroundingParentheses(from: word.text)
+                if cleaned.isEmpty { return nil }
+                return LyricWord(
+                    id: word.id,
+                    text: cleaned,
+                    startMs: word.startMs,
+                    endMs: word.endMs,
+                    isPartOfWord: word.isPartOfWord,
+                    isLetterGroup: word.isLetterGroup,
+                    letters: word.letters
+                )
+            }
+        }
+        let cleanRaw = line.rawText.map { stripSurroundingParentheses(from: $0) }
+        return LyricLine(
+            id: line.id,
+            words: cleanWords,
+            startMs: line.startMs,
+            lineEndMs: line.lineEndMs,
+            isWordSynced: line.isWordSynced && !cleanWords.isEmpty,
+            agent: line.agent,
+            isBackground: true,
+            oppositeAligned: line.oppositeAligned,
+            isSongwriter: line.isSongwriter,
+            isInterlude: line.isInterlude,
+            interludeEndMs: line.interludeEndMs,
+            translation: line.translation,
+            romanization: line.romanization,
+            rawText: cleanRaw,
+            isStatic: line.isStatic
+        )
+    }
+
+    private static func processWordSyncedLine(_ line: LyricLine) -> [LyricLine] {
+        let hasAnyParen = line.words.contains {
+            $0.text.contains("(") || $0.text.contains(")") || $0.text.contains("（") || $0.text.contains("）")
+        }
+        guard hasAnyParen else { return [line] }
+
+        var leadWords: [LyricWord] = []
+        var bgWords: [LyricWord] = []
+        var inParenthesis = false
+
+        for word in line.words {
+            let t = word.text.trimmingCharacters(in: .whitespaces)
+            let opens = t.contains("(") || t.contains("（")
+            let closes = t.contains(")") || t.contains("）")
+
+            if opens {
+                inParenthesis = true
+            }
+
+            let isWordInParen = inParenthesis || opens || closes
+
+            let cleanedText = stripSurroundingParentheses(from: word.text)
+            if !cleanedText.isEmpty {
+                let cleanedWord = LyricWord(
+                    id: word.id,
+                    text: cleanedText,
+                    startMs: word.startMs,
+                    endMs: word.endMs,
+                    isPartOfWord: word.isPartOfWord,
+                    isLetterGroup: word.isLetterGroup,
+                    letters: word.letters
+                )
+                if isWordInParen {
+                    bgWords.append(cleanedWord)
+                } else {
+                    leadWords.append(cleanedWord)
+                }
+            }
+
+            if closes {
+                inParenthesis = false
+            }
+        }
+
+        if bgWords.isEmpty {
+            return [line]
+        }
+
+        if leadWords.isEmpty {
+            let bgStart = bgWords.first?.startMs ?? line.startMs
+            let bgEnd = bgWords.last?.endMs ?? line.endMs
+            return [
+                LyricLine(
+                    id: line.id,
+                    words: bgWords,
+                    startMs: bgStart,
+                    lineEndMs: bgEnd,
+                    isWordSynced: true,
+                    agent: line.agent,
+                    isBackground: true,
+                    oppositeAligned: line.oppositeAligned,
+                    isSongwriter: line.isSongwriter,
+                    isInterlude: line.isInterlude,
+                    interludeEndMs: line.interludeEndMs,
+                    translation: line.translation,
+                    romanization: line.romanization,
+                    rawText: bgWords.map(\.text).joined(separator: " "),
+                    isStatic: line.isStatic
+                )
+            ]
+        }
+
+        let leadStart = leadWords.first?.startMs ?? line.startMs
+        let leadEnd = leadWords.last?.endMs ?? line.endMs
+        let leadLine = LyricLine(
+            id: line.id,
+            words: leadWords,
+            startMs: leadStart,
+            lineEndMs: leadEnd,
+            isWordSynced: true,
+            agent: line.agent,
+            isBackground: false,
+            oppositeAligned: line.oppositeAligned,
+            isSongwriter: line.isSongwriter,
+            isInterlude: line.isInterlude,
+            interludeEndMs: line.interludeEndMs,
+            translation: line.translation,
+            romanization: line.romanization,
+            rawText: leadWords.map(\.text).joined(separator: " "),
+            isStatic: line.isStatic
+        )
+
+        let bgStart = bgWords.first?.startMs ?? line.startMs
+        let bgEnd = bgWords.last?.endMs ?? line.endMs
+        let bgLine = LyricLine(
+            id: UUID(),
+            words: bgWords,
+            startMs: bgStart,
+            lineEndMs: bgEnd,
+            isWordSynced: true,
+            agent: line.agent,
+            isBackground: true,
+            oppositeAligned: line.oppositeAligned,
+            isSongwriter: false,
+            isInterlude: false,
+            interludeEndMs: -1,
+            translation: nil,
+            romanization: nil,
+            rawText: bgWords.map(\.text).joined(separator: " "),
+            isStatic: line.isStatic
+        )
+
+        return [leadLine, bgLine]
+    }
+
+    private static func processLineSyncedLine(_ line: LyricLine) -> [LyricLine] {
+        let text = line.displayText
+        guard text.contains("(") || text.contains("（") else { return [line] }
+        if isInstrumentalText(text) { return [line] }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Case 1: Entire line is wrapped in parentheses
+        if (trimmed.hasPrefix("(") && trimmed.hasSuffix(")")) || (trimmed.hasPrefix("（") && trimmed.hasSuffix("）")) {
+            let clean = String(trimmed.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { return [] }
+            if isRepeatAnnotation(clean) { return [] }
+
+            return [
+                LyricLine(
+                    id: line.id,
+                    words: [],
+                    startMs: line.startMs,
+                    lineEndMs: line.lineEndMs,
+                    isWordSynced: false,
+                    agent: line.agent,
+                    isBackground: true,
+                    oppositeAligned: line.oppositeAligned,
+                    isSongwriter: line.isSongwriter,
+                    isInterlude: line.isInterlude,
+                    interludeEndMs: line.interludeEndMs,
+                    translation: line.translation,
+                    romanization: line.romanization,
+                    rawText: clean,
+                    isStatic: line.isStatic
+                )
+            ]
+        }
+
+        // Case 2: Mixed lead and parenthesized text
+        var leadParts: [String] = []
+        var bgParts: [String] = []
+
+        var currentLead = ""
+        var currentBg = ""
+        var inParen = false
+
+        for ch in trimmed {
+            if ch == "(" || ch == "（" {
+                if !currentLead.isEmpty {
+                    leadParts.append(currentLead)
+                    currentLead = ""
+                }
+                inParen = true
+            } else if ch == ")" || ch == "）" {
+                if inParen && !currentBg.isEmpty {
+                    bgParts.append(currentBg)
+                    currentBg = ""
+                }
+                inParen = false
+            } else {
+                if inParen {
+                    currentBg.append(ch)
+                } else {
+                    currentLead.append(ch)
+                }
+            }
+        }
+
+        if !currentLead.isEmpty {
+            leadParts.append(currentLead)
+        }
+        if !currentBg.isEmpty {
+            bgParts.append(currentBg)
+        }
+
+        let cleanLead = leadParts.joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let cleanBgList = bgParts.map {
+            $0.split(whereSeparator: \.isWhitespace).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty && !isRepeatAnnotation($0) }
+
+        if cleanBgList.isEmpty {
+            return [line]
+        }
+
+        if cleanLead.isEmpty {
+            return cleanBgList.enumerated().map { (idx, bgText) in
+                LyricLine(
+                    id: idx == 0 ? line.id : UUID(),
+                    words: [],
+                    startMs: line.startMs,
+                    lineEndMs: line.lineEndMs,
+                    isWordSynced: false,
+                    agent: line.agent,
+                    isBackground: true,
+                    oppositeAligned: line.oppositeAligned,
+                    isSongwriter: line.isSongwriter,
+                    isInterlude: line.isInterlude,
+                    interludeEndMs: line.interludeEndMs,
+                    translation: line.translation,
+                    romanization: line.romanization,
+                    rawText: bgText,
+                    isStatic: line.isStatic
+                )
+            }
+        }
+
+        let leadLine = LyricLine(
+            id: line.id,
+            words: [],
+            startMs: line.startMs,
+            lineEndMs: line.lineEndMs,
+            isWordSynced: false,
+            agent: line.agent,
+            isBackground: false,
+            oppositeAligned: line.oppositeAligned,
+            isSongwriter: line.isSongwriter,
+            isInterlude: line.isInterlude,
+            interludeEndMs: line.interludeEndMs,
+            translation: line.translation,
+            romanization: line.romanization,
+            rawText: cleanLead,
+            isStatic: line.isStatic
+        )
+
+        var resultLines: [LyricLine] = [leadLine]
+        for bgText in cleanBgList {
+            resultLines.append(
+                LyricLine(
+                    id: UUID(),
+                    words: [],
+                    startMs: line.startMs,
+                    lineEndMs: line.lineEndMs,
+                    isWordSynced: false,
+                    agent: line.agent,
+                    isBackground: true,
+                    oppositeAligned: line.oppositeAligned,
+                    isSongwriter: false,
+                    isInterlude: false,
+                    interludeEndMs: -1,
+                    translation: nil,
+                    romanization: nil,
+                    rawText: bgText,
+                    isStatic: line.isStatic
+                )
+            )
+        }
+
+        return resultLines
+    }
+
+    private static func isRepeatAnnotation(_ text: String) -> Bool {
+        let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if lower.hasPrefix("x") && lower.dropFirst().allSatisfy(\.isNumber) { return true }
+        if lower.hasSuffix("x") && lower.dropLast().allSatisfy(\.isNumber) { return true }
+        return false
+    }
+
+    private static func stripSurroundingParentheses(from text: String) -> String {
+        var s = text.trimmingCharacters(in: .whitespaces)
+        while s.hasPrefix("(") || s.hasPrefix("（") {
+            s.removeFirst()
+        }
+        while s.hasSuffix(")") || s.hasSuffix("）") {
+            s.removeLast()
+        }
+        return s.trimmingCharacters(in: .whitespaces)
     }
 }
 

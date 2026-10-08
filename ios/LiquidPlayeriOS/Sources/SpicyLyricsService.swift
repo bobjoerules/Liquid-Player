@@ -371,6 +371,7 @@ struct SpicyVocalGroup: Decodable {
     let StartTime: Double?
     let EndTime: Double?
     let OppositeAligned: Bool?
+    let agent: String?
     let TransliteratedText: String?
     let TranslatedText: String?
     let Syllables: [SpicySyllable]?
@@ -379,6 +380,7 @@ struct SpicyVocalGroup: Decodable {
         case StartTime, startTime, start, Start, begin, Begin
         case EndTime, endTime, end, End
         case OppositeAligned, oppositeAligned
+        case agent
         case TransliteratedText, transliteratedText
         case TranslatedText, translatedText
         case Syllables, syllables, words, Words
@@ -389,6 +391,7 @@ struct SpicyVocalGroup: Decodable {
         self.StartTime = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin])
         self.EndTime = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End])
         self.OppositeAligned = decodeFirst(from: container, keys: [.OppositeAligned, .oppositeAligned])
+        self.agent = try? container.decodeIfPresent(String.self, forKey: .agent)
         self.TransliteratedText = decodeFirst(from: container, keys: [.TransliteratedText, .transliteratedText])
         self.TranslatedText = decodeFirst(from: container, keys: [.TranslatedText, .translatedText])
         self.Syllables = decodeFirst(from: container, keys: [.Syllables, .syllables, .words, .Words])
@@ -807,9 +810,43 @@ actor SpicyLyricsService {
         return nil
     }
 
+    private func isOppositeAligned(contentLine: SpicyContentLine, agentOrder: [String] = []) -> Bool {
+        let agentCandidate = contentLine.agent ?? contentLine.Lead?.agent ?? contentLine.Background?.compactMap(\.agent).first
+        if let agent = agentCandidate?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !agent.isEmpty {
+            if agent.hasPrefix("v"), let num = Int(agent.dropFirst()) {
+                return num % 2 == 0
+            }
+            if let num = Int(agent) {
+                return num % 2 == 0
+            }
+            if let lastDigit = agent.compactMap({ $0.wholeNumberValue }).last {
+                return lastDigit % 2 == 0
+            }
+            if let idx = agentOrder.firstIndex(of: agent) {
+                return (idx + 1) % 2 == 0
+            }
+            if agent == "v1" || agent == "1" {
+                return false
+            }
+        }
+        return (contentLine.OppositeAligned == true) || (contentLine.Lead?.OppositeAligned == true)
+    }
+
     private func parseLyricsBody(_ body: SpicyLyricsBody, overrideAttribution: SpicyUploadAttribution? = nil) -> ParsedLyrics {
         let songwriters = body.SongWriters ?? []
         var vocalUnits: [VocalUnit] = []
+        var agentOrder: [String] = []
+
+        if let contentLines = body.Content {
+            for contentLine in contentLines {
+                let candidate = contentLine.agent ?? contentLine.Lead?.agent ?? contentLine.Background?.compactMap(\.agent).first
+                if let raw = candidate?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !raw.isEmpty {
+                    if !agentOrder.contains(raw) {
+                        agentOrder.append(raw)
+                    }
+                }
+            }
+        }
 
         let isStatic = (body.type?.caseInsensitiveCompare("Static") == .orderedSame) ||
                        (body.type == nil && (body.Content?.allSatisfy { ($0.StartTime == nil || $0.StartTime == 0) && ($0.EndTime == nil || $0.EndTime == 0) && $0.Lead == nil } ?? false))
@@ -833,7 +870,7 @@ actor SpicyLyricsService {
                     guard !text.isEmpty else { continue }
                     let startMs = isStatic ? 0 : max(0, Int((contentLine.StartTime ?? contentLine.Lead?.StartTime ?? 0.0) * 1000.0))
                     let endMs = isStatic ? 0 : max(startMs + 500, Int((contentLine.EndTime ?? contentLine.Lead?.EndTime ?? (Double(startMs) / 1000.0 + 3.0)) * 1000.0))
-                    let opposite = contentLine.OppositeAligned ?? contentLine.Lead?.OppositeAligned ?? (contentLine.agent != nil && contentLine.agent != "1" && contentLine.agent != "v1")
+                    let opposite = isOppositeAligned(contentLine: contentLine, agentOrder: agentOrder)
 
                     unitLeadLines.append(
                         LyricLine(
@@ -841,7 +878,7 @@ actor SpicyLyricsService {
                             startMs: startMs,
                             lineEndMs: endMs,
                             isWordSynced: false,
-                            agent: contentLine.agent ?? (opposite ? "v2" : "v1"),
+                            agent: contentLine.agent ?? contentLine.Lead?.agent ?? (opposite ? "v2" : "v1"),
                             isBackground: false,
                             oppositeAligned: opposite,
                             isSongwriter: false,
@@ -854,7 +891,7 @@ actor SpicyLyricsService {
                         )
                     )
                 } else if let lead = contentLine.Lead {
-                    let opposite = contentLine.OppositeAligned ?? contentLine.Lead?.OppositeAligned ?? (contentLine.agent != nil && contentLine.agent != "1" && contentLine.agent != "v1")
+                    let opposite = isOppositeAligned(contentLine: contentLine, agentOrder: agentOrder)
                     let startMs = max(0, Int((lead.StartTime ?? 0.0) * 1000.0))
                     let endMs = max(startMs + 500, Int((lead.EndTime ?? Double(startMs) / 1000.0 + 3.0) * 1000.0))
                     let rawSyllables = lead.Syllables ?? []
@@ -987,7 +1024,7 @@ actor SpicyLyricsService {
                             startMs: actualStart,
                             lineEndMs: actualEnd,
                             isWordSynced: isTrulyWordSynced,
-                            agent: contentLine.agent ?? (opposite ? "v2" : "v1"),
+                            agent: contentLine.agent ?? contentLine.Lead?.agent ?? (opposite ? "v2" : "v1"),
                             isBackground: false,
                             oppositeAligned: opposite,
                             isSongwriter: false,
@@ -1089,14 +1126,14 @@ actor SpicyLyricsService {
                             let bgIdentical = effectiveBgWords.count >= 3 && Set(bgDurations).count == 1
                             let bgDistinctStarts = effectiveBgWords.count > 1 ? Set(effectiveBgWords.map(\.startMs)).count > 1 : true
                             let hasWordTimings = !isSongLineSynced && !effectiveBgWords.isEmpty && bgDistinctStarts && !bgIdentical
-                            let opposite = contentLine.OppositeAligned ?? contentLine.Lead?.OppositeAligned ?? (contentLine.agent != nil && contentLine.agent != "1" && contentLine.agent != "v1")
+                            let opposite = isOppositeAligned(contentLine: contentLine, agentOrder: agentOrder)
                             unitBgLines.append(
                                 LyricLine(
                                     words: hasWordTimings ? effectiveBgWords : [],
                                     startMs: actualStart,
                                     lineEndMs: actualEnd,
                                     isWordSynced: hasWordTimings,
-                                    agent: contentLine.agent ?? (opposite ? "v2" : "v1"),
+                                    agent: bg.agent ?? contentLine.agent ?? contentLine.Lead?.agent ?? (opposite ? "v2" : "v1"),
                                     isBackground: true,
                                     oppositeAligned: opposite,
                                     isSongwriter: false,
@@ -1244,8 +1281,9 @@ actor SpicyLyricsService {
             resolvedSource = "Spicy Lyrics"
         }
 
+        let processedLines = BackgroundVocalsEngine.processLines(sortedAll)
         return ParsedLyrics(
-            lines: sortedAll,
+            lines: processedLines,
             songwriters: songwriters,
             source: resolvedSource,
             attribution: attribution,

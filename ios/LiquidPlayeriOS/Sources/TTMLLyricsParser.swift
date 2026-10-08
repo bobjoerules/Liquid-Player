@@ -36,7 +36,9 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
     var maker: SpicyAttributionUser? = nil
     var error: Error?
 
-    private var defaultAgent: String?
+    private var defaultAgent: String? = "v1"
+    private var divAgentStack: [String?] = []
+    private var agentOrder: [String] = []
     private var inSongwriter = false
     private var inSource = false
     private var currentParagraph: ParagraphState?
@@ -234,7 +236,8 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
         }
 
         let attribution: SpicyUploadAttribution? = (uploader != nil || maker != nil) ? SpicyUploadAttribution(uploader: uploader, maker: maker) : nil
-        return ParsedLyrics(lines: allLines, songwriters: songwriters, source: source, attribution: attribution, isStatic: isStatic)
+        let processedLines = BackgroundVocalsEngine.processLines(allLines)
+        return ParsedLyrics(lines: processedLines, songwriters: songwriters, source: source, attribution: attribution, isStatic: isStatic)
     }
 
     func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
@@ -293,32 +296,46 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
                     url: finalUrl
                 )
             }
+        case "div":
+            let divAgent = attributeDict["agent"] ?? attributeDict["ttm:agent"]
+            registerAgent(divAgent)
+            divAgentStack.append(divAgent)
         case "agent":
             let identifier = attributeDict["xml:id"] ?? attributeDict["id"]
+            registerAgent(identifier)
             if identifier == "v1" || identifier == "1" {
-                defaultAgent = identifier
-            } else if defaultAgent == nil {
                 defaultAgent = identifier
             }
         case "p":
-            let agent = attributeDict["agent"] ?? attributeDict["ttm:agent"]
+            let currentDivAgent = divAgentStack.reversed().compactMap { $0 }.first
+            let explicitAgent = attributeDict["agent"] ?? attributeDict["ttm:agent"]
+            let agent = explicitAgent ?? currentDivAgent
+            registerAgent(agent)
             if agent == "v1" || agent == "1" {
-                defaultAgent = agent
-            } else if defaultAgent == nil, let agent {
                 defaultAgent = agent
             }
             currentParagraph = ParagraphState(
                 beginMs: parseTimeMs(attributeDict["begin"]) ?? 0,
                 endMs: parseTimeMs(attributeDict["end"]) ?? 0,
                 agent: agent,
-                defaultAgent: defaultAgent
+                defaultAgent: defaultAgent ?? "v1",
+                agentOrder: agentOrder
             )
         case "span":
+            let spanAgent = attributeDict["agent"] ?? attributeDict["ttm:agent"]
+            registerAgent(spanAgent)
             currentParagraph?.pushSpan(attributes: attributeDict)
         case "br":
             currentParagraph?.insertLineBreak()
         default:
             break
+        }
+    }
+
+    private func registerAgent(_ raw: String?) {
+        guard let clean = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !clean.isEmpty else { return }
+        if !agentOrder.contains(clean) {
+            agentOrder.append(clean)
         }
     }
 
@@ -351,6 +368,10 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
         let name = normalizedName(elementName, qName)
 
         switch name {
+        case "div":
+            if !divAgentStack.isEmpty {
+                divAgentStack.removeLast()
+            }
         case "source":
             inSource = false
         case "songwriter":
@@ -384,6 +405,7 @@ private struct ParagraphState {
     let endMs: Int
     let agent: String?
     let defaultAgent: String?
+    var agentOrder: [String]
 
     struct LineDraft {
         var words: [LyricWord] = []
@@ -403,11 +425,12 @@ private struct ParagraphState {
     private var backgroundHadWhitespace = true
     private var pendingText = ""
 
-    init(beginMs: Int, endMs: Int, agent: String?, defaultAgent: String?) {
+    init(beginMs: Int, endMs: Int, agent: String?, defaultAgent: String?, agentOrder: [String] = []) {
         self.beginMs = beginMs
         self.endMs = endMs
         self.agent = agent
         self.defaultAgent = defaultAgent
+        self.agentOrder = agentOrder
         self.stack = [ParserDelegate.SpanContext(begin: beginMs, end: endMs, hasExplicitTiming: false, isBackground: false, isTranslation: false, isRoman: false)]
     }
 
@@ -415,6 +438,10 @@ private struct ParagraphState {
         flushPendingText()
         if let sa = attributes["agent"] ?? attributes["ttm:agent"] {
             spanAgent = sa
+            let clean = sa.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !clean.isEmpty && !agentOrder.contains(clean) {
+                agentOrder.append(clean)
+            }
         }
         let inherited = stack.last ?? ParserDelegate.SpanContext(begin: beginMs, end: endMs, hasExplicitTiming: false, isBackground: false, isTranslation: false, isRoman: false)
         let hasExplicitTiming = (attributes["begin"] != nil)
@@ -722,9 +749,27 @@ private struct ParagraphState {
 
     func makeLines() -> [LyricLine] {
         let effectiveAgent = agent ?? spanAgent
-        let isExplicitOpposite = effectiveAgent == "v2" || effectiveAgent == "2"
-        let isDifferentAgent = effectiveAgent != nil && defaultAgent != nil && effectiveAgent != defaultAgent
-        let oppositeAligned = isExplicitOpposite || isDifferentAgent
+        let oppositeAligned: Bool = {
+            guard let raw = effectiveAgent?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !raw.isEmpty else {
+                return false
+            }
+            if raw.hasPrefix("v"), let num = Int(raw.dropFirst()) {
+                return num % 2 == 0
+            }
+            if let num = Int(raw) {
+                return num % 2 == 0
+            }
+            if let lastDigit = raw.compactMap({ $0.wholeNumberValue }).last {
+                return lastDigit % 2 == 0
+            }
+            if let idx = agentOrder.firstIndex(of: raw) {
+                return (idx + 1) % 2 == 0
+            }
+            if raw == "v1" || raw == "1" {
+                return false
+            }
+            return defaultAgent != nil && raw != defaultAgent
+        }()
         let lineAgent = effectiveAgent ?? (oppositeAligned ? "v2" : "v1")
         var result: [LyricLine] = []
 

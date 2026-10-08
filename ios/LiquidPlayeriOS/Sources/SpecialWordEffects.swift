@@ -10,16 +10,18 @@ public enum WordSpecialEffect: String, CaseIterable, Equatable {
     case rainbow
     case heart
     case ocean
+    case diamond
 
     public var displayName: String {
         switch self {
         case .fire: return "Fire (Flames)"
-        case .christmas: return "Christmas (Snowfall)"
+        case .christmas: return "Christmas & Cold (Snowfall)"
         case .night: return "Night (Sparkles)"
-        case .sun: return "Sun (Glowing Yellow)"
+        case .sun: return "Sun & Summer (Glowing Yellow)"
         case .rainbow: return "Rainbow (Multi-color Letters)"
         case .heart: return "Heart (Pulsing Red)"
         case .ocean: return "Ocean (Aquatic Waves)"
+        case .diamond: return "Diamond (Sparkling Crystal)"
         }
     }
 
@@ -29,6 +31,7 @@ public enum WordSpecialEffect: String, CaseIterable, Equatable {
         case .night: return Color(red: 0.38, green: 0.58, blue: 1.0)
         case .sun: return Color(red: 1.0, green: 0.88, blue: 0.12)
         case .heart: return Color(red: 0.98, green: 0.18, blue: 0.36)
+        case .diamond: return Color(red: 0.72, green: 0.93, blue: 1.0)
         default: return nil
         }
     }
@@ -42,6 +45,7 @@ public enum WordSpecialEffect: String, CaseIterable, Equatable {
         case .rainbow: return Color(red: 0.75, green: 0.30, blue: 0.95)
         case .heart: return Color(red: 0.98, green: 0.20, blue: 0.38)
         case .ocean: return Color(red: 0.10, green: 0.68, blue: 0.90)
+        case .diamond: return Color(red: 0.60, green: 0.88, blue: 1.0)
         }
     }
 }
@@ -69,12 +73,15 @@ public enum SpecialWordEffectsLookup {
              "spark", "sparks", "sparking":
             return .fire
         case "christmas", "xmas", "snow", "snows", "snowing", "snowy", "snowflake", "snowflakes",
-             "snowman", "snowmen", "winter", "yuletide", "santa", "reindeer", "holiday", "holidays":
+             "snowman", "snowmen", "winter", "yuletide", "santa", "reindeer", "holiday", "holidays",
+             "cold", "colds", "colder", "coldest", "freeze", "freezes", "freezing", "froze", "frozen",
+             "chill", "chills", "chilly", "chillin", "chillin'", "frost", "frosty", "ice", "icy":
             return .christmas
         case "night", "nights", "midnight", "star", "stars", "starry", "starlight",
              "moon", "moonlight", "moons", "twilight", "goodnight", "goodnights", "tonight", "nighttime":
             return .night
-        case "sun", "sunshine", "sunny", "sunlight", "sunrise", "sunset", "solar":
+        case "sun", "sunshine", "sunny", "sunlight", "sunrise", "sunset", "solar",
+             "summer", "summers", "summertime":
             return .sun
         case "rainbow", "rainbows":
             return .rainbow
@@ -83,6 +90,8 @@ public enum SpecialWordEffectsLookup {
             return .heart
         case "ocean", "sea", "wave", "waves", "water", "waters", "tsunami", "rain", "rains", "raining", "rainy", "raindrop", "raindrops":
             return .ocean
+        case "diamond", "diamonds":
+            return .diamond
         default:
             return nil
         }
@@ -223,6 +232,47 @@ struct NightSparklesParticleView: View {
                 starPath.addLine(to: CGPoint(x: x + scale, y: y))
 
                 context.stroke(starPath, with: .color(Color(red: 0.85, green: 0.92, blue: 1.0, opacity: opacity * 0.95)), lineWidth: 1.2)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+struct DiamondSparklesParticleView: View {
+    let currentTimeMs: Int
+
+    var body: some View {
+        let time = Double(currentTimeMs) / 1000.0
+        Canvas { context, size in
+            let w = size.width
+            let h = size.height
+
+            let glints: [(xRatio: Double, yRatio: Double, speed: Double, seed: Double)] = [
+                (0.18, 0.25, 1.3, 0.0),
+                (0.48, 0.80, 1.6, 1.5),
+                (0.82, 0.20, 1.2, 2.8),
+                (0.70, 0.70, 1.4, 4.1)
+            ]
+
+            for gl in glints {
+                let cycle = (time * gl.speed + gl.seed).truncatingRemainder(dividingBy: 1.0)
+                let opacity = max(0.0, sin(cycle * .pi))
+                let scale = max(0.1, sin(cycle * .pi)) * 4.5
+                let x = w * gl.xRatio
+                let y = h * gl.yRatio
+
+                var starPath = Path()
+                starPath.move(to: CGPoint(x: x, y: y - scale))
+                starPath.addLine(to: CGPoint(x: x, y: y + scale))
+                starPath.move(to: CGPoint(x: x - scale, y: y))
+                starPath.addLine(to: CGPoint(x: x + scale, y: y))
+
+                // Sparkling brilliant diamond glint color
+                context.stroke(
+                    starPath,
+                    with: .color(Color(red: 0.82, green: 0.96, blue: 1.0, opacity: opacity * 0.95)),
+                    lineWidth: 1.3
+                )
             }
         }
         .allowsHitTesting(false)
@@ -451,6 +501,11 @@ public struct SpecialWordEffectTokenView: View {
                 .padding(.vertical, -8)
                 .padding(.horizontal, 0)
                 .allowsHitTesting(false)
+        case .diamond:
+            DiamondSparklesParticleView(currentTimeMs: currentTimeMs)
+                .padding(.vertical, -8)
+                .padding(.horizontal, 0)
+                .allowsHitTesting(false)
         default:
             EmptyView()
         }
@@ -480,6 +535,10 @@ public struct SpecialWordEffectTokenView: View {
                 Text(text).font(font).lineLimit(1).fixedSize(horizontal: true, vertical: false).foregroundStyle(color)
             }
         case .heart:
+            if let color = effect.singleColor {
+                Text(text).font(font).lineLimit(1).fixedSize(horizontal: true, vertical: false).foregroundStyle(color)
+            }
+        case .diamond:
             if let color = effect.singleColor {
                 Text(text).font(font).lineLimit(1).fixedSize(horizontal: true, vertical: false).foregroundStyle(color)
             }

@@ -8,8 +8,8 @@ settings:
   base:
     PRODUCT_NAME: Liquid Player
     PRODUCT_BUNDLE_IDENTIFIER: com.bobjoerules.liquidplayer
-    MARKETING_VERSION: 1.1.7
-    CURRENT_PROJECT_VERSION: 8
+    MARKETING_VERSION: 1.1.8
+    CURRENT_PROJECT_VERSION: 9
     SWIFT_VERSION: "5.10"
     IPHONEOS_DEPLOYMENT_TARGET: 17.0
     TARGETED_DEVICE_FAMILY: "1,2,6"
@@ -27,6 +27,7 @@ targets:
     info:
       path: LiquidPlayeriOS/Info.plist
       properties:
+        NSAppleMusicUsageDescription: Liquid Player requires access to Apple Music to synchronize playback and display synchronized lyrics for your currently playing tracks.
         UIBackgroundModes:
           - audio
         CFBundleURLTypes:
@@ -37,6 +38,7 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Liquid Player
+        INFOPLIST_KEY_NSAppleMusicUsageDescription: Liquid Player requires access to Apple Music to synchronize playback and display synchronized lyrics for your currently playing tracks.
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES

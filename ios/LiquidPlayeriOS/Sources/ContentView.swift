@@ -233,10 +233,12 @@ struct ContentView: View {
                 style: viewModel.backgroundStyle,
                 artwork: viewModel.artwork,
                 motionURL: viewModel.isMotionArtworkEnabled ? (viewModel.motionArtworkTallURL ?? viewModel.motionArtworkURL) : nil,
-                paletteHexes: viewModel.artworkPaletteHexes
+                paletteHexes: viewModel.artworkPaletteHexes,
+                blurRadius: CGFloat(viewModel.backgroundBlurRadius)
             )
             .ignoresSafeArea()
             .animation(.easeInOut(duration: 0.35), value: viewModel.backgroundStyle)
+            .animation(.easeInOut(duration: 0.25), value: viewModel.backgroundBlurRadius)
             #else
             (colorScheme == .light ? Color.white : Color.black).ignoresSafeArea()
             #endif
@@ -1366,10 +1368,12 @@ struct ContentView: View {
                 style: viewModel.backgroundStyle,
                 artwork: viewModel.artwork,
                 motionURL: viewModel.isMotionArtworkEnabled ? (viewModel.motionArtworkTallURL ?? viewModel.motionArtworkURL) : nil,
-                paletteHexes: viewModel.artworkPaletteHexes
+                paletteHexes: viewModel.artworkPaletteHexes,
+                blurRadius: CGFloat(viewModel.backgroundBlurRadius)
             )
             .ignoresSafeArea()
             .animation(.easeInOut(duration: 0.35), value: viewModel.backgroundStyle)
+            .animation(.easeInOut(duration: 0.25), value: viewModel.backgroundBlurRadius)
             #else
             (colorScheme == .light ? Color.white : Color.black).ignoresSafeArea()
             #endif
@@ -1923,6 +1927,7 @@ private struct PlayerBackgroundView: View {
     let artwork: UIImage?
     var motionURL: URL? = nil
     var paletteHexes: [String] = []
+    var blurRadius: CGFloat = 65
 
     private var paletteColors: [Color] {
         if paletteHexes.isEmpty {
@@ -1967,7 +1972,7 @@ private struct PlayerBackgroundView: View {
                                     .scaledToFill()
                                     .frame(width: size.width, height: size.height)
                                     .scaleEffect(1.30)
-                                    .blur(radius: 65)
+                                    .blur(radius: blurRadius)
                                     .saturation(1.15)
                                     .contrast(1.02)
                                     .opacity(isLight ? 0.35 : 0.50)
@@ -1977,7 +1982,7 @@ private struct PlayerBackgroundView: View {
                                 MotionArtworkPlayerView(streamURL: motionURL, placeholder: artwork)
                                     .frame(width: size.width, height: size.height)
                                     .scaleEffect(1.30)
-                                    .blur(radius: 60)
+                                    .blur(radius: max(0, blurRadius - 5))
                                     .saturation(1.15)
                                     .contrast(1.02)
                                     .opacity(isLight ? 0.35 : 0.50)
@@ -2024,7 +2029,7 @@ private struct PlayerBackgroundView: View {
                                 .scaledToFill()
                                 .frame(width: size.width, height: size.height)
                                 .scaleEffect(1.25)
-                                .blur(radius: 65)
+                                .blur(radius: blurRadius)
                                 .saturation(1.15)
                                 .opacity(isLight ? 0.18 : 0.28)
                                 .clipped()
@@ -2038,9 +2043,9 @@ private struct PlayerBackgroundView: View {
 
                 case .moving:
                     if let motionURL {
-                        MotionArtworkBackgroundView(motionURL: motionURL, artwork: artwork, paletteHexes: paletteHexes)
+                        MotionArtworkBackgroundView(motionURL: motionURL, artwork: artwork, paletteHexes: paletteHexes, blurRadius: blurRadius)
                     } else {
-                        AnimatedArtworkBackground(artwork: artwork, paletteHexes: paletteHexes)
+                        AnimatedArtworkBackground(artwork: artwork, paletteHexes: paletteHexes, blurRadius: blurRadius)
                     }
                 }
             }
@@ -2056,6 +2061,7 @@ private struct MotionArtworkBackgroundView: View {
     let motionURL: URL
     let artwork: UIImage?
     var paletteHexes: [String] = []
+    var blurRadius: CGFloat = 65
 
     private var paletteColors: [Color] {
         if paletteHexes.isEmpty {
@@ -2089,7 +2095,7 @@ private struct MotionArtworkBackgroundView: View {
                             .scaledToFill()
                             .frame(width: size.width, height: size.height)
                             .scaleEffect(1.30)
-                            .blur(radius: 55)
+                            .blur(radius: max(0, blurRadius - 10))
                             .saturation(1.15)
                             .contrast(1.02)
                             .opacity(isLight ? 0.38 : 0.52)
@@ -2099,7 +2105,7 @@ private struct MotionArtworkBackgroundView: View {
                     MotionArtworkPlayerView(streamURL: motionURL, placeholder: artwork)
                         .frame(width: size.width, height: size.height)
                         .scaleEffect(1.30)
-                        .blur(radius: 55)
+                        .blur(radius: max(0, blurRadius - 10))
                         .saturation(1.15)
                         .contrast(1.02)
                         .opacity(isLight ? 0.38 : 0.52)
@@ -2128,6 +2134,7 @@ private struct AnimatedArtworkBackground: View {
     @Environment(\.colorScheme) private var colorScheme
     let artwork: UIImage?
     var paletteHexes: [String] = []
+    var blurRadius: CGFloat = 65
 
     private var paletteColors: [Color] {
         if paletteHexes.isEmpty {
@@ -2175,7 +2182,7 @@ private struct AnimatedArtworkBackground: View {
                                 y: 16 * cos(time * 0.18)
                             )
                             .rotationEffect(.degrees(3.0 * sin(time * 0.12)))
-                            .blur(radius: 65)
+                            .blur(radius: blurRadius)
                             .saturation(1.15)
                             .contrast(1.02)
                             .opacity(isLight ? 0.35 : 0.48)
@@ -2191,7 +2198,7 @@ private struct AnimatedArtworkBackground: View {
                                 y: -18 * sin(time * 0.25)
                             )
                             .rotationEffect(.degrees(-4.0 * cos(time * 0.15) + 180))
-                            .blur(radius: 75)
+                            .blur(radius: blurRadius * 1.15)
                             .saturation(1.15)
                             .contrast(1.02)
                             .opacity(isLight ? 0.14 : 0.22)
@@ -2242,8 +2249,8 @@ private struct AnimatedArtworkBackground: View {
                                 colors: isLight
                                     ? [Color.white.opacity(0.40), Color.white.opacity(0.85)]
                                     : [Color.black.opacity(0.38), Color.black.opacity(0.82)],
-                                startPoint: .top,
-                                endPoint: .bottom
+                                    startPoint: .top,
+                                    endPoint: .bottom
                             )
                         )
                 }
@@ -2258,7 +2265,7 @@ private struct AnimatedArtworkBackground: View {
             .fill(color)
             .frame(width: size, height: size)
             .position(x: x, y: y)
-            .blur(radius: size * 0.28)
+            .blur(radius: max(4, size * 0.28 * (blurRadius / 65.0)))
             .opacity(opacity)
             .blendMode(isLight ? .softLight : .screen)
     }
@@ -2557,6 +2564,20 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
 
+                if viewModel.backgroundStyle != .black {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Background Blur")
+                            Spacer()
+                            Text("\(Int(viewModel.backgroundBlurRadius)) pt")
+                                .foregroundStyle(.secondary)
+                                .font(.subheadline)
+                        }
+                        Slider(value: $viewModel.backgroundBlurRadius, in: 0...120, step: 1)
+                            .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+                    }
+                }
+
                 Picker("Font Style", selection: $viewModel.lyricsFontDesign) {
                     ForEach(LyricsFontDesign.allCases) { design in
                         Text(design.rawValue).tag(design)
@@ -2575,6 +2596,9 @@ struct SettingsView: View {
                     .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
 
                 Toggle("Lyric Bounce", isOn: $viewModel.isLyricsBounceEnabled)
+                    .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
+
+                Toggle("Raise Playing Lyrics", isOn: $viewModel.isLyricsRaiseEnabled)
                     .tint(Color(red: 0.11, green: 0.73, blue: 0.33))
 
                 Toggle("Motion Album Artwork", isOn: $viewModel.isMotionArtworkEnabled)
@@ -3954,6 +3978,7 @@ private struct LyricsPanelView: View {
             fontSize: viewModel.lyricsFontSize.leadSize,
             isGlowEnabled: viewModel.isLyricsGlowEnabled,
             isBounceEnabled: viewModel.isLyricsBounceEnabled,
+            isRaiseEnabled: viewModel.isLyricsRaiseEnabled,
             activeColor: lineColor,
             isExactColorEnabled: viewModel.isExactColorEnabled,
             isSpecialWordEffectsEnabled: viewModel.isSpecialWordEffectsEnabled,

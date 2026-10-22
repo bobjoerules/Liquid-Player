@@ -642,6 +642,16 @@ final class PlayerViewModel: ObservableObject {
             UserDefaults.standard.set(backgroundStyle.rawValue, forKey: "LiquidPlayeriOS.backgroundStyle")
         }
     }
+    @Published var backgroundBlurRadius: Double = {
+        if let saved = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.backgroundBlurRadius") as? Double {
+            return saved
+        }
+        return 65.0
+    }() {
+        didSet {
+            UserDefaults.standard.set(backgroundBlurRadius, forKey: "LiquidPlayeriOS.backgroundBlurRadius")
+        }
+    }
     @Published var isLyricsGlowEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isLyricsGlowEnabled") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(isLyricsGlowEnabled, forKey: "LiquidPlayeriOS.isLyricsGlowEnabled")
@@ -650,6 +660,11 @@ final class PlayerViewModel: ObservableObject {
     @Published var isLyricsBounceEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isLyricsBounceEnabled") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(isLyricsBounceEnabled, forKey: "LiquidPlayeriOS.isLyricsBounceEnabled")
+        }
+    }
+    @Published var isLyricsRaiseEnabled: Bool = UserDefaults.standard.object(forKey: "LiquidPlayeriOS.isLyricsRaiseEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(isLyricsRaiseEnabled, forKey: "LiquidPlayeriOS.isLyricsRaiseEnabled")
         }
     }
     @Published var lyricsFontDesign: LyricsFontDesign = {

@@ -375,8 +375,11 @@ struct SpicySyllableTokenView: View {
         let isWordActive = isLineActive && word.startMs <= currentTimeMs && currentTimeMs < word.endMs
         let duration = max(word.endMs - word.startMs, 1)
         let progress = max(0.0, min(1.0, Double(currentTimeMs - word.startMs) / Double(duration)))
-        let scale = (isBounceEnabled && isWordActive) ? SpicySplines.scaleSpline.at(progress) : 1.0
-        let yLift = (isBounceEnabled && isWordActive) ? (SpicySplines.ySpline.at(progress) * 32.0) : 0.0
+        let speedDamping = max(0.20, min(1.0, Double(duration) / 380.0))
+        let raiseIntensity = 0.65 * CGFloat(speedDamping)
+        let rawScale = (isBounceEnabled && isWordActive) ? SpicySplines.scaleSpline.at(progress) : 1.0
+        let scale = 1.0 + (rawScale - 1.0) * raiseIntensity
+        let yLift = (isBounceEnabled && isWordActive) ? (SpicySplines.ySpline.at(progress) * 20.0 * raiseIntensity) : 0.0
         let scaleX: CGFloat = isSyllableSplit ? 1.0 : scale
         let scaleY: CGFloat = scale
 
@@ -439,8 +442,11 @@ struct SpicySyllableTokenView: View {
         if let effect = specialEffect {
             let duration = max(word.endMs - word.startMs, 1)
             let progress = max(0.0, min(1.0, Double(currentTimeMs - word.startMs) / Double(duration)))
-            let scale = (isBounceEnabled && isWordActive) ? SpicySplines.scaleSpline.at(progress) : 1.0
-            let yLift = (isBounceEnabled && isWordActive) ? (SpicySplines.ySpline.at(progress) * 32.0) : 0.0
+            let speedDamping = max(0.20, min(1.0, Double(duration) / 380.0))
+            let raiseIntensity = 0.65 * CGFloat(speedDamping)
+            let rawScale = (isBounceEnabled && isWordActive) ? SpicySplines.scaleSpline.at(progress) : 1.0
+            let scale = 1.0 + (rawScale - 1.0) * raiseIntensity
+            let yLift = (isBounceEnabled && isWordActive) ? (SpicySplines.ySpline.at(progress) * 20.0 * raiseIntensity) : 0.0
             let scaleX: CGFloat = isSyllableSplit ? 1.0 : scale
             let scaleY: CGFloat = scale
 
@@ -471,8 +477,12 @@ struct SpicySyllableTokenView: View {
                     if isLetterActive {
                         let duration = max(letter.endMs - letter.startMs, 1)
                         let progress = max(0.0, min(1.0, Double(currentTimeMs - letter.startMs) / Double(duration)))
-                        let scale = isBounceEnabled ? SpicySplines.letterScaleSpline.at(progress) : 1.0
-                        let yLift = isBounceEnabled ? (SpicySplines.letterYSpline.at(progress) * 28.0) : 0.0
+                        let wordDuration = max(word.endMs - word.startMs, 1)
+                        let wordSpeedDamping = max(0.20, min(1.0, Double(wordDuration) / 380.0))
+                        let letterRaiseIntensity = 0.55 * CGFloat(wordSpeedDamping)
+                        let rawScale = isBounceEnabled ? SpicySplines.letterScaleSpline.at(progress) : 1.0
+                        let scale = 1.0 + (rawScale - 1.0) * letterRaiseIntensity
+                        let yLift = isBounceEnabled ? (SpicySplines.letterYSpline.at(progress) * 16.0 * letterRaiseIntensity) : 0.0
                         let p = -0.15 + 1.30 * progress
                         let stop1 = max(0.0, min(0.95, p))
                         let stop2 = min(1.0, max(stop1 + 0.05, p + 0.20))
@@ -630,9 +640,8 @@ struct SpicyDotLineView: View {
                 let isDotActive = isLineActive && current >= dotStart && current < dotEnd
                 let isDotSung = isLineActive && current >= dotEnd
 
-                // Up & down bounce arc: lifts up and lands back down smoothly over the active window
                 let jumpProgress = min(1.0, p / 0.70)
-                let jumpArc = sin(jumpProgress * .pi) // 0.0 -> 1.0 (peak) -> 0.0 (landed)
+                let jumpArc = sin(jumpProgress * .pi)
 
                 let yOffset: CGFloat = {
                     guard isBounceEnabled && isDotActive else { return 0 }
@@ -811,6 +820,7 @@ struct SpicyLyricLineView: View, Equatable {
     let fontSize: CGFloat
     let isGlowEnabled: Bool
     let isBounceEnabled: Bool
+    let isRaiseEnabled: Bool
     let activeColor: Color
     var isExactColorEnabled: Bool = true
     var isSpecialWordEffectsEnabled: Bool = true
@@ -831,6 +841,7 @@ struct SpicyLyricLineView: View, Equatable {
         lhs.fontSize == rhs.fontSize &&
         lhs.isGlowEnabled == rhs.isGlowEnabled &&
         lhs.isBounceEnabled == rhs.isBounceEnabled &&
+        lhs.isRaiseEnabled == rhs.isRaiseEnabled &&
         lhs.activeColor == rhs.activeColor &&
         lhs.isExactColorEnabled == rhs.isExactColorEnabled &&
         lhs.isSpecialWordEffectsEnabled == rhs.isSpecialWordEffectsEnabled &&
@@ -852,6 +863,7 @@ struct SpicyLyricLineView: View, Equatable {
         fontSize: CGFloat = 28,
         isGlowEnabled: Bool = true,
         isBounceEnabled: Bool = true,
+        isRaiseEnabled: Bool = true,
         activeColor: Color = .white,
         isExactColorEnabled: Bool = true,
         isSpecialWordEffectsEnabled: Bool = true,
@@ -871,6 +883,7 @@ struct SpicyLyricLineView: View, Equatable {
         self.fontSize = fontSize
         self.isGlowEnabled = isGlowEnabled
         self.isBounceEnabled = isBounceEnabled
+        self.isRaiseEnabled = isRaiseEnabled
         self.activeColor = activeColor
         self.isExactColorEnabled = isExactColorEnabled
         self.isSpecialWordEffectsEnabled = isSpecialWordEffectsEnabled
@@ -986,7 +999,8 @@ struct SpicyLyricLineView: View, Equatable {
                     }
                 }
                 .opacity(lineOpacity)
-                .scaleEffect(isBounceEnabled ? (isLineActive ? 1.0 : 0.96) : 1.0, anchor: line.oppositeAligned ? .trailing : .leading)
+                .scaleEffect(isRaiseEnabled ? (isLineActive ? 1.0 : 0.96) : 1.0, anchor: line.oppositeAligned ? .trailing : .leading)
+                .offset(y: isRaiseEnabled ? (isLineActive ? -3.5 : 0) : 0)
                 .animation(isPlaying ? .spring(response: 0.48, dampingFraction: 1.0) : nil, value: isLineActive)
                 .modifier(OptionalBlurModifier(radius: lineBlur))
                 .padding(.top, line.isBackground ? -4 : (isMacPlatform ? 14 : 10))

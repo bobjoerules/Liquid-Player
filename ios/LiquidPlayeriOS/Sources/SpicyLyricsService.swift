@@ -26,6 +26,23 @@ private func decodeFlexibleDouble<K: CodingKey>(from container: KeyedDecodingCon
     return nil
 }
 
+private func decodeFlexibleBool<K: CodingKey>(from container: KeyedDecodingContainer<K>, keys: [K]) -> Bool? {
+    for key in keys {
+        if let boolVal = try? container.decodeIfPresent(Bool.self, forKey: key) {
+            return boolVal
+        }
+        if let intVal = try? container.decodeIfPresent(Int.self, forKey: key) {
+            return intVal != 0
+        }
+        if let strVal = try? container.decodeIfPresent(String.self, forKey: key) {
+            let lower = strVal.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if lower == "true" || lower == "1" || lower == "yes" { return true }
+            if lower == "false" || lower == "0" || lower == "no" { return false }
+        }
+    }
+    return nil
+}
+
 private struct AnyDecodableDummy: Decodable {}
 
 private func decodeLossyArray<T: Decodable, K: CodingKey>(from container: KeyedDecodingContainer<K>, keys: [K]) -> [T]? {
@@ -58,7 +75,7 @@ struct SpicyLyricsEnvelope: Decodable {
     let maker: SpicyAttributionUserDTO?
 
     enum CodingKeys: String, CodingKey {
-        case Body, body, data, Data, result, Result
+        case Body, body, data, Data, result, Result, lyrics, Lyrics
         case Status, status, statusCode
         case type = "Type", typeLower = "type"
         case UploadAttribution, uploadAttributionLower = "uploadAttribution", attribution, Attribution, credits, Credits
@@ -68,7 +85,7 @@ struct SpicyLyricsEnvelope: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.Body = decodeFirst(from: container, keys: [.Body, .body, .data, .Data, .result, .Result])
+        self.Body = decodeFirst(from: container, keys: [.Body, .body, .data, .Data, .result, .Result, .lyrics, .Lyrics])
         self.Status = decodeFirst(from: container, keys: [.Status, .status, .statusCode])
         self.type = decodeFirst(from: container, keys: [.type, .typeLower])
         self.UploadAttribution = decodeFirst(from: container, keys: [.UploadAttribution, .uploadAttributionLower, .attribution, .Attribution, .credits, .Credits])
@@ -103,7 +120,7 @@ struct SpicyLyricsBody: Decodable {
         case maker, Maker
         case plainLyrics
         case text
-        case lyrics
+        case lyrics, lyricsUpper = "Lyrics"
     }
 
     init(
@@ -164,10 +181,10 @@ struct SpicyLyricsBody: Decodable {
         }
         self.UploadAttribution = resolvedUploadAttr
 
-        self.plainLyrics = decodeFirst(from: container, keys: [.plainLyrics, .lyrics])
+        self.plainLyrics = decodeFirst(from: container, keys: [.plainLyrics, .lyrics, .lyricsUpper])
         self.text = try? container.decodeIfPresent(String.self, forKey: .text)
 
-        let lineKeys: [CodingKeys] = [.Content, .Lines, .linesLower, .contentLower]
+        let lineKeys: [CodingKeys] = [.Content, .Lines, .linesLower, .contentLower, .lyrics, .lyricsUpper]
         if let lines: [SpicyContentLine] = decodeFirst(from: container, keys: lineKeys) {
             self.Content = lines
         } else if let lossyLines: [SpicyContentLine] = decodeLossyArray(from: container, keys: lineKeys) {
@@ -327,9 +344,9 @@ struct SpicyContentLine: Decodable {
         case agent
         case Lead, lead
         case Background, background
-        case StartTime, startTime, start, Start, begin, Begin
-        case EndTime, endTime, end, End
-        case Text, text
+        case StartTime, startTime, start, Start, begin, Begin, startTimeMs, start_time_ms, time, timeMs
+        case EndTime, endTime, end, End, endTimeMs, end_time_ms
+        case Text, text, words, Words, line, Line, lyric, Lyric, content, Content
         case TransliteratedText, transliteratedText
         case TranslatedText, translatedText
     }
@@ -344,13 +361,58 @@ struct SpicyContentLine: Decodable {
         let type: String? = decodeFirst(from: container, keys: [.type, .typeLower])
         let OppositeAligned: Bool? = decodeFirst(from: container, keys: [.OppositeAligned, .oppositeAligned])
         let agent = try? container.decodeIfPresent(String.self, forKey: .agent)
-        let Lead: SpicyVocalGroup? = decodeFirst(from: container, keys: [.Lead, .lead])
-        let Background: [SpicyVocalGroup]? = decodeFirst(from: container, keys: [.Background, .background])
-        let StartTime = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin])
-        let EndTime = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End])
-        let Text: String? = decodeFirst(from: container, keys: [.Text, .text])
+
+        let rawStart = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin, .startTimeMs, .start_time_ms, .time, .timeMs])
+        let hasStartMsKey = decodeFlexibleDouble(from: container, keys: [.startTimeMs, .start_time_ms, .timeMs]) != nil
+        let isStartMs = hasStartMsKey || (rawStart != nil && rawStart! > 10000.0)
+        let resolvedStart = rawStart.map { isStartMs ? ($0 / 1000.0) : $0 }
+
+        let rawEnd = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End, .endTimeMs, .end_time_ms])
+        let hasEndMsKey = decodeFlexibleDouble(from: container, keys: [.endTimeMs, .end_time_ms]) != nil
+        let isEndMs = hasEndMsKey || (rawEnd != nil && rawEnd! > 10000.0)
+        let resolvedEnd = rawEnd.map { isEndMs ? ($0 / 1000.0) : $0 }
+
+        let Text: String? = decodeFirst(from: container, keys: [.Text, .text, .words, .Words, .line, .Line, .lyric, .Lyric, .content, .Content])
         let TransliteratedText: String? = decodeFirst(from: container, keys: [.TransliteratedText, .transliteratedText])
         let TranslatedText: String? = decodeFirst(from: container, keys: [.TranslatedText, .translatedText])
+
+        var Lead: SpicyVocalGroup? = decodeFirst(from: container, keys: [.Lead, .lead])
+        if Lead == nil {
+            if let leadArray: [SpicyVocalGroup] = decodeFirst(from: container, keys: [.Lead, .lead]) {
+                Lead = leadArray.first
+            } else if let lossyLead: [SpicyVocalGroup] = decodeLossyArray(from: container, keys: [.Lead, .lead]) {
+                Lead = lossyLead.first
+            } else if let directSyllables: [SpicySyllable] = decodeFirst(from: container, keys: [.Lead, .lead]) ?? decodeLossyArray(from: container, keys: [.Lead, .lead]) {
+                Lead = SpicyVocalGroup(
+                    StartTime: resolvedStart,
+                    EndTime: resolvedEnd,
+                    OppositeAligned: OppositeAligned,
+                    agent: agent,
+                    TransliteratedText: TransliteratedText,
+                    TranslatedText: TranslatedText,
+                    Syllables: directSyllables
+                )
+            }
+        }
+
+        var Background: [SpicyVocalGroup]? = decodeFirst(from: container, keys: [.Background, .background])
+        if Background == nil {
+            if let lossyBg: [SpicyVocalGroup] = decodeLossyArray(from: container, keys: [.Background, .background]) {
+                Background = lossyBg
+            } else if let singleBg: SpicyVocalGroup = decodeFirst(from: container, keys: [.Background, .background]) {
+                Background = [singleBg]
+            } else if let directSyllables: [SpicySyllable] = decodeFirst(from: container, keys: [.Background, .background]) ?? decodeLossyArray(from: container, keys: [.Background, .background]) {
+                Background = [SpicyVocalGroup(
+                    StartTime: resolvedStart,
+                    EndTime: resolvedEnd,
+                    OppositeAligned: OppositeAligned,
+                    agent: agent,
+                    TransliteratedText: TransliteratedText,
+                    TranslatedText: TranslatedText,
+                    Syllables: directSyllables
+                )]
+            }
+        }
 
         self.init(
             type: type,
@@ -358,8 +420,8 @@ struct SpicyContentLine: Decodable {
             agent: agent,
             Lead: Lead,
             Background: Background,
-            StartTime: StartTime,
-            EndTime: EndTime,
+            StartTime: resolvedStart,
+            EndTime: resolvedEnd,
             Text: Text,
             TransliteratedText: TransliteratedText,
             TranslatedText: TranslatedText
@@ -377,8 +439,8 @@ struct SpicyVocalGroup: Decodable {
     let Syllables: [SpicySyllable]?
 
     enum CodingKeys: String, CodingKey {
-        case StartTime, startTime, start, Start, begin, Begin
-        case EndTime, endTime, end, End
+        case StartTime, startTime, start, Start, begin, Begin, startTimeMs, start_time_ms, time, timeMs
+        case EndTime, endTime, end, End, endTimeMs, end_time_ms
         case OppositeAligned, oppositeAligned
         case agent
         case TransliteratedText, transliteratedText
@@ -386,15 +448,43 @@ struct SpicyVocalGroup: Decodable {
         case Syllables, syllables, words, Words
     }
 
+    init(
+        StartTime: Double? = nil,
+        EndTime: Double? = nil,
+        OppositeAligned: Bool? = nil,
+        agent: String? = nil,
+        TransliteratedText: String? = nil,
+        TranslatedText: String? = nil,
+        Syllables: [SpicySyllable]? = nil
+    ) {
+        self.StartTime = StartTime
+        self.EndTime = EndTime
+        self.OppositeAligned = OppositeAligned
+        self.agent = agent
+        self.TransliteratedText = TransliteratedText
+        self.TranslatedText = TranslatedText
+        self.Syllables = Syllables
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.StartTime = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin])
-        self.EndTime = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End])
+        let rawStart = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin, .startTimeMs, .start_time_ms, .time, .timeMs])
+        let hasStartMsKey = decodeFlexibleDouble(from: container, keys: [.startTimeMs, .start_time_ms, .timeMs]) != nil
+        let isStartMs = hasStartMsKey || (rawStart != nil && rawStart! > 10000.0)
+        self.StartTime = rawStart.map { isStartMs ? ($0 / 1000.0) : $0 }
+
+        let rawEnd = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End, .endTimeMs, .end_time_ms])
+        let hasEndMsKey = decodeFlexibleDouble(from: container, keys: [.endTimeMs, .end_time_ms]) != nil
+        let isEndMs = hasEndMsKey || (rawEnd != nil && rawEnd! > 10000.0)
+        self.EndTime = rawEnd.map { isEndMs ? ($0 / 1000.0) : $0 }
+
         self.OppositeAligned = decodeFirst(from: container, keys: [.OppositeAligned, .oppositeAligned])
         self.agent = try? container.decodeIfPresent(String.self, forKey: .agent)
         self.TransliteratedText = decodeFirst(from: container, keys: [.TransliteratedText, .transliteratedText])
         self.TranslatedText = decodeFirst(from: container, keys: [.TranslatedText, .translatedText])
-        self.Syllables = decodeFirst(from: container, keys: [.Syllables, .syllables, .words, .Words])
+
+        let sylKeys: [CodingKeys] = [.Syllables, .syllables, .words, .Words]
+        self.Syllables = decodeFirst(from: container, keys: sylKeys) ?? decodeLossyArray(from: container, keys: sylKeys)
     }
 }
 
@@ -406,9 +496,9 @@ struct SpicySyllable: Decodable {
     let TransliteratedText: String?
 
     enum CodingKeys: String, CodingKey {
-        case Text, text
-        case StartTime, startTime, start, Start, begin, Begin
-        case EndTime, endTime, end, End
+        case Text, text, word, Word, content, Content
+        case StartTime, startTime, start, Start, begin, Begin, startTimeMs, start_time_ms, time, timeMs
+        case EndTime, endTime, end, End, endTimeMs, end_time_ms
         case IsPartOfWord, isPartOfWord
         case TransliteratedText, transliteratedText
     }
@@ -425,11 +515,21 @@ struct SpicySyllable: Decodable {
         }
 
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.Text = decodeFirst(from: container, keys: [.Text, .text]) ?? ""
-        let start = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin]) ?? 0.0
-        self.StartTime = start
-        self.EndTime = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End]) ?? (start + 0.3)
-        self.IsPartOfWord = decodeFirst(from: container, keys: [.IsPartOfWord, .isPartOfWord])
+        self.Text = decodeFirst(from: container, keys: [.Text, .text, .word, .Word, .content, .Content]) ?? ""
+
+        let rawStart = decodeFlexibleDouble(from: container, keys: [.StartTime, .startTime, .start, .Start, .begin, .Begin, .startTimeMs, .start_time_ms, .time, .timeMs]) ?? 0.0
+        let hasStartMsKey = decodeFlexibleDouble(from: container, keys: [.startTimeMs, .start_time_ms, .timeMs]) != nil
+        let isStartMs = hasStartMsKey || rawStart > 10000.0
+        let resolvedStart = isStartMs ? (rawStart / 1000.0) : rawStart
+        self.StartTime = resolvedStart
+
+        let rawEnd = decodeFlexibleDouble(from: container, keys: [.EndTime, .endTime, .end, .End, .endTimeMs, .end_time_ms])
+        let hasEndMsKey = decodeFlexibleDouble(from: container, keys: [.endTimeMs, .end_time_ms]) != nil
+        let isEndMs = hasEndMsKey || (rawEnd != nil && rawEnd! > 10000.0)
+        let resolvedEnd = rawEnd.map { isEndMs ? ($0 / 1000.0) : $0 } ?? (resolvedStart + 0.3)
+        self.EndTime = resolvedEnd
+
+        self.IsPartOfWord = decodeFlexibleBool(from: container, keys: [.IsPartOfWord, .isPartOfWord])
         self.TransliteratedText = decodeFirst(from: container, keys: [.TransliteratedText, .transliteratedText])
     }
 }
@@ -531,12 +631,12 @@ actor SpicyLyricsService {
             request.setValue(cleanApiKey, forHTTPHeaderField: "Client-Key")
             request.setValue(cleanApiKey, forHTTPHeaderField: "X-Client-Key")
             request.setValue(cleanApiKey, forHTTPHeaderField: "X-API-Key")
-            request.setValue("LiquidPlayer/1.1.4 (iOS; SpicyLyrics-Client)", forHTTPHeaderField: "User-Agent")
+            request.setValue("LiquidPlayer/1.1.9 (iOS; SpicyLyrics-Client)", forHTTPHeaderField: "User-Agent")
             request.setValue("application/json, text/xml, application/xml;q=0.9, */*;q=0.8", forHTTPHeaderField: "Accept")
 
             var lastError: Error?
-            // Attempt request with 1 retry for transient network glitches
-            for attempt in 1...2 {
+            // Attempt request with retries for transient network glitches or rate limits
+            for attempt in 1...3 {
                 do {
                     let (data, response) = try await session.data(for: request)
                     guard let httpResponse = response as? HTTPURLResponse else {
@@ -547,110 +647,149 @@ actor SpicyLyricsService {
                         throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 404, userInfo: [NSLocalizedDescriptionKey: "Lyrics not found for \(cleanId)."])
                     }
 
+                    if httpResponse.statusCode == 429 {
+                        var waitSeconds: Double = 1.0
+                        if let retryHeader = httpResponse.value(forHTTPHeaderField: "Retry-After"), let sec = Double(retryHeader) {
+                            waitSeconds = min(max(sec, 0.5), 5.0)
+                        } else {
+                            waitSeconds = Double(attempt) * 0.8
+                        }
+                        if attempt < 3 {
+                            try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
+                            continue
+                        }
+                        throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 429, userInfo: [NSLocalizedDescriptionKey: "Spicy Lyrics rate limit exceeded. Please wait a moment."])
+                    }
+
                     guard httpResponse.statusCode == 200 else {
-                        if httpResponse.statusCode == 503 {
-                            throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 503, userInfo: [NSLocalizedDescriptionKey: "Upstream lyrics service temporarily unavailable."])
+                        if httpResponse.statusCode >= 500 && httpResponse.statusCode <= 504 {
+                            if attempt < 3 {
+                                try? await Task.sleep(nanoseconds: UInt64(Double(attempt) * 500_000_000))
+                                continue
+                            }
+                            throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Upstream lyrics service temporarily unavailable (\(httpResponse.statusCode))."])
                         }
                         throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"])
                     }
 
-                        // 1. Direct TTML / XML response check
-                        let textStr = String(data: data, encoding: .utf8)
-                        let trimmedText = textStr?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                        if trimmedText.hasPrefix("<") || trimmedText.contains("<?xml") || (trimmedText.contains("<tt") && !trimmedText.hasPrefix("{")) {
-                            if let parsed = try? TTMLLyricsParser.parse(data: data), !parsed.lines.isEmpty {
-                                return parsed
-                            }
+                    // 1. Direct TTML / XML response check
+                    let textStr = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+                    let trimmedText = textStr.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmedText.hasPrefix("<") || trimmedText.contains("<?xml") || (trimmedText.contains("<tt") && !trimmedText.hasPrefix("{")) {
+                        if let parsed = try? TTMLLyricsParser.parse(data: data), !parsed.lines.isEmpty {
+                            return parsed
                         }
+                    }
 
-                        // 2. Safely parse JSON dictionary to extract attribution and check embedded TTML without dropping credits
-                        let jsonDict = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-                        let extractedAttr = Self.extractAttribution(from: jsonDict)
-                        let extractedSongwriters = Self.extractSongwriters(from: jsonDict)
+                    // 2. Safely parse JSON dictionary to extract attribution and check embedded TTML without dropping credits
+                    let jsonDict = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
 
-                        // Check candidate embedded TTML string keys
-                        let ttmlKeys = ["ttml", "TTML", "xml", "XML"]
-                        for key in ttmlKeys {
-                            let candidateXml: String? = (jsonDict[key] as? String) ?? ((jsonDict["body"] as? [String: Any])?[key] as? String) ?? ((jsonDict["data"] as? [String: Any])?[key] as? String)
-                            if let xml = candidateXml, xml.contains("<tt") {
-                                if let parsed = try? TTMLLyricsParser.parse(data: Data(xml.utf8)), !parsed.lines.isEmpty {
-                                    let finalAttr = extractedAttr ?? parsed.attribution
-                                    return ParsedLyrics(
-                                        lines: parsed.lines,
-                                        songwriters: !parsed.songwriters.isEmpty ? parsed.songwriters : extractedSongwriters,
-                                        source: parsed.source ?? "Spicy Lyrics",
-                                        attribution: finalAttr,
-                                        isStatic: parsed.isStatic
-                                    )
-                                }
-                            }
-                        }
+                    // Check for explicit error in 200 response
+                    if let isError = jsonDict["error"] as? Bool, isError {
+                        let msg = (jsonDict["message"] as? String) ?? "Lyrics not found"
+                        throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 404, userInfo: [NSLocalizedDescriptionKey: msg])
+                    }
+                    if let statusVal = jsonDict["status"] as? Int, statusVal == 404 {
+                        throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: 404, userInfo: [NSLocalizedDescriptionKey: "Lyrics not found for \(cleanId)."])
+                    }
 
-                        // 3. Flexible JSON decoding: Try envelope first, then direct body
-                        let body: SpicyLyricsBody
-                        if let envelope = try? JSONDecoder().decode(SpicyLyricsEnvelope.self, from: data), let envBody = envelope.Body {
-                            if envBody.UploadAttribution == nil {
-                                let envelopeAttr = envelope.UploadAttribution ?? (
-                                    (envelope.uploader != nil || envelope.maker != nil) ? SpicyUploadAttributionDTO(uploader: envelope.uploader, maker: envelope.maker) : nil
-                                )
-                                body = envBody.withUploadAttribution(envelopeAttr)
-                            } else {
-                                body = envBody
-                            }
-                        } else if let directBody = try? JSONDecoder().decode(SpicyLyricsBody.self, from: data),
-                                  (directBody.Content != nil || directBody.plainLyrics != nil || directBody.text != nil) {
-                            body = directBody
-                        } else if let bodyDict = (jsonDict["Body"] as? [String: Any]) ?? (jsonDict["body"] as? [String: Any]) ?? (jsonDict["data"] as? [String: Any]),
-                                  let bodyData = try? JSONSerialization.data(withJSONObject: bodyDict),
-                                  let parsedDictBody = try? JSONDecoder().decode(SpicyLyricsBody.self, from: bodyData) {
-                            body = parsedDictBody
-                        } else {
-                            throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: -2, userInfo: [NSLocalizedDescriptionKey: "Empty or unrecognized Spicy Lyrics response format."])
-                        }
+                    let extractedAttr = Self.extractAttribution(from: jsonDict)
+                    let extractedSongwriters = Self.extractSongwriters(from: jsonDict)
 
-                        // 4. If plainLyrics or text contains TTML XML, parse it with TTMLLyricsParser while PRESERVING attribution!
-                        if let ttmlText = body.plainLyrics ?? body.text, ttmlText.contains("<tt") {
-                            if let parsed = try? TTMLLyricsParser.parse(data: Data(ttmlText.utf8)), !parsed.lines.isEmpty {
-                                let finalAttr = extractedAttr ?? self.resolveAttribution(from: body.UploadAttribution) ?? parsed.attribution
-                                let resolvedSrc: String
-                                if let rawSource = body.source?.trimmingCharacters(in: .whitespacesAndNewlines), !rawSource.isEmpty {
-                                    if rawSource.lowercased().contains("community") {
-                                        resolvedSrc = "Spicy Lyrics Community"
-                                    } else if rawSource.lowercased().contains("spicy") {
-                                        resolvedSrc = finalAttr != nil ? "Spicy Lyrics Community" : "Spicy Lyrics"
-                                    } else {
-                                        resolvedSrc = "Spicy Lyrics (\(rawSource.replacingOccurrences(of: "_", with: " ").capitalized))"
-                                    }
-                                } else if finalAttr != nil {
-                                    resolvedSrc = "Spicy Lyrics Community"
-                                } else {
-                                    resolvedSrc = parsed.source ?? "Spicy Lyrics"
-                                }
+                    // Check candidate embedded TTML string keys
+                    let ttmlKeys = ["ttml", "TTML", "xml", "XML"]
+                    for key in ttmlKeys {
+                        let candidateXml: String? = (jsonDict[key] as? String) ?? ((jsonDict["body"] as? [String: Any])?[key] as? String) ?? ((jsonDict["data"] as? [String: Any])?[key] as? String)
+                        if let xml = candidateXml, xml.contains("<tt") {
+                            if let parsed = try? TTMLLyricsParser.parse(data: Data(xml.utf8)), !parsed.lines.isEmpty {
+                                let finalAttr = extractedAttr ?? parsed.attribution
                                 return ParsedLyrics(
                                     lines: parsed.lines,
-                                    songwriters: !parsed.songwriters.isEmpty ? parsed.songwriters : (body.SongWriters ?? extractedSongwriters),
-                                    source: resolvedSrc,
+                                    songwriters: !parsed.songwriters.isEmpty ? parsed.songwriters : extractedSongwriters,
+                                    source: parsed.source ?? "Spicy Lyrics",
                                     attribution: finalAttr,
                                     isStatic: parsed.isStatic
                                 )
                             }
                         }
+                    }
 
-                        let parsed = self.parseLyricsBody(body, overrideAttribution: extractedAttr)
-                        if !parsed.lines.isEmpty {
-                            return parsed
+                    // 3. Flexible JSON decoding: Try envelope first, then direct body, then dictionary unwrap
+                    let body: SpicyLyricsBody
+                    if let envelope = try? JSONDecoder().decode(SpicyLyricsEnvelope.self, from: data), let envBody = envelope.Body {
+                        if envBody.UploadAttribution == nil {
+                            let envelopeAttr = envelope.UploadAttribution ?? (
+                                (envelope.uploader != nil || envelope.maker != nil) ? SpicyUploadAttributionDTO(uploader: envelope.uploader, maker: envelope.maker) : nil
+                            )
+                            body = envBody.withUploadAttribution(envelopeAttr)
+                        } else {
+                            body = envBody
                         }
-                    } catch {
-                        lastError = error
-                        // Don't retry client errors (e.g. 404 or 401)
-                        if let nsErr = error as NSError?, nsErr.code == 404 || nsErr.code == 401 {
-                            break
-                        }
-                        if attempt < 2 {
-                            try? await Task.sleep(nanoseconds: 200_000_000)
+                    } else if let directBody = try? JSONDecoder().decode(SpicyLyricsBody.self, from: data),
+                              (directBody.Content != nil || directBody.plainLyrics != nil || directBody.text != nil) {
+                        body = directBody
+                    } else if let bodyDict = (jsonDict["Body"] as? [String: Any]) ??
+                                             (jsonDict["body"] as? [String: Any]) ??
+                                             (jsonDict["data"] as? [String: Any]) ??
+                                             (jsonDict["Data"] as? [String: Any]) ??
+                                             (jsonDict["result"] as? [String: Any]) ??
+                                             (jsonDict["Result"] as? [String: Any]) ??
+                                             (jsonDict["lyrics"] as? [String: Any]) ??
+                                             (jsonDict["Lyrics"] as? [String: Any]),
+                              let bodyData = try? JSONSerialization.data(withJSONObject: bodyDict),
+                              let parsedDictBody = try? JSONDecoder().decode(SpicyLyricsBody.self, from: bodyData) {
+                        body = parsedDictBody
+                    } else if (jsonDict["Content"] != nil || jsonDict["content"] != nil || jsonDict["lines"] != nil || jsonDict["Lines"] != nil),
+                              let directDictData = try? JSONSerialization.data(withJSONObject: jsonDict),
+                              let directDictBody = try? JSONDecoder().decode(SpicyLyricsBody.self, from: directDictData) {
+                        body = directDictBody
+                    } else {
+                        throw NSError(domain: "LiquidPlayer.SpicyLyrics", code: -2, userInfo: [NSLocalizedDescriptionKey: "Empty or unrecognized Spicy Lyrics response format."])
+                    }
+
+                    // 4. If plainLyrics or text contains TTML XML, parse it with TTMLLyricsParser while PRESERVING attribution!
+                    if let ttmlText = body.plainLyrics ?? body.text, ttmlText.contains("<tt") {
+                        if let parsed = try? TTMLLyricsParser.parse(data: Data(ttmlText.utf8)), !parsed.lines.isEmpty {
+                            let finalAttr = extractedAttr ?? self.resolveAttribution(from: body.UploadAttribution) ?? parsed.attribution
+                            let resolvedSrc: String
+                            if let rawSource = body.source?.trimmingCharacters(in: .whitespacesAndNewlines), !rawSource.isEmpty {
+                                if rawSource.lowercased().contains("community") {
+                                    resolvedSrc = "Spicy Lyrics Community"
+                                } else if rawSource.lowercased().contains("spicy") {
+                                    resolvedSrc = finalAttr != nil ? "Spicy Lyrics Community" : "Spicy Lyrics"
+                                } else {
+                                    resolvedSrc = "Spicy Lyrics (\(rawSource.replacingOccurrences(of: "_", with: " ").capitalized))"
+                                }
+                            } else if finalAttr != nil {
+                                resolvedSrc = "Spicy Lyrics Community"
+                            } else {
+                                resolvedSrc = parsed.source ?? "Spicy Lyrics"
+                            }
+                            return ParsedLyrics(
+                                lines: parsed.lines,
+                                songwriters: !parsed.songwriters.isEmpty ? parsed.songwriters : (body.SongWriters ?? extractedSongwriters),
+                                source: resolvedSrc,
+                                attribution: finalAttr,
+                                isStatic: parsed.isStatic
+                            )
                         }
                     }
+
+                    let parsed = self.parseLyricsBody(body, overrideAttribution: extractedAttr)
+                    if !parsed.lines.isEmpty {
+                        return parsed
+                    }
+                } catch {
+                    lastError = error
+                    // Don't retry client errors (e.g. 404 or 401)
+                    if let nsErr = error as NSError?, nsErr.code == 404 || nsErr.code == 401 {
+                        break
+                    }
+                    if attempt < 3 {
+                        try? await Task.sleep(nanoseconds: UInt64(attempt) * 200_000_000)
+                    }
                 }
+            }
 
             throw lastError ?? NSError(domain: "LiquidPlayer.SpicyLyrics", code: -1, userInfo: [NSLocalizedDescriptionKey: "Spicy Lyrics request failed."])
         }
@@ -832,6 +971,15 @@ actor SpicyLyricsService {
         return (contentLine.OppositeAligned == true) || (contentLine.Lead?.OppositeAligned == true)
     }
 
+    private static func parseTimestampToMs(_ rawVal: Double?, fallback: Int = 0) -> Int {
+        guard let val = rawVal, !val.isNaN, !val.isInfinite else { return fallback }
+        if val > 10000.0 {
+            return max(0, Int(val.rounded()))
+        } else {
+            return max(0, Int((val * 1000.0).rounded()))
+        }
+    }
+
     private func parseLyricsBody(_ body: SpicyLyricsBody, overrideAttribution: SpicyUploadAttribution? = nil) -> ParsedLyrics {
         let songwriters = body.SongWriters ?? []
         var vocalUnits: [VocalUnit] = []
@@ -868,8 +1016,8 @@ actor SpicyLyricsService {
                     let rawContentText = contentLine.Text ?? contentLine.Lead?.Syllables?.map(\.Text).joined(separator: " ") ?? ""
                     let text = rawContentText.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !text.isEmpty else { continue }
-                    let startMs = isStatic ? 0 : max(0, Int((contentLine.StartTime ?? contentLine.Lead?.StartTime ?? 0.0) * 1000.0))
-                    let endMs = isStatic ? 0 : max(startMs + 500, Int((contentLine.EndTime ?? contentLine.Lead?.EndTime ?? (Double(startMs) / 1000.0 + 3.0)) * 1000.0))
+                    let startMs = isStatic ? 0 : Self.parseTimestampToMs(contentLine.StartTime ?? contentLine.Lead?.StartTime, fallback: 0)
+                    let endMs = isStatic ? 0 : max(startMs + 500, Self.parseTimestampToMs(contentLine.EndTime ?? contentLine.Lead?.EndTime, fallback: startMs + 3000))
                     let opposite = isOppositeAligned(contentLine: contentLine, agentOrder: agentOrder)
 
                     unitLeadLines.append(
@@ -892,14 +1040,14 @@ actor SpicyLyricsService {
                     )
                 } else if let lead = contentLine.Lead {
                     let opposite = isOppositeAligned(contentLine: contentLine, agentOrder: agentOrder)
-                    let startMs = max(0, Int((lead.StartTime ?? 0.0) * 1000.0))
-                    let endMs = max(startMs + 500, Int((lead.EndTime ?? Double(startMs) / 1000.0 + 3.0) * 1000.0))
+                    let startMs = Self.parseTimestampToMs(lead.StartTime, fallback: 0)
+                    let endMs = max(startMs + 500, Self.parseTimestampToMs(lead.EndTime, fallback: startMs + 3000))
                     let rawSyllables = lead.Syllables ?? []
 
                     var candidateWords: [LyricWord] = []
                     for (sylIndex, syl) in rawSyllables.enumerated() {
-                        let sylStart = max(0, Int(syl.StartTime * 1000.0))
-                        let sylEnd = max(sylStart + 1, Int(syl.EndTime * 1000.0))
+                        let sylStart = Self.parseTimestampToMs(syl.StartTime, fallback: 0)
+                        let sylEnd = max(sylStart + 1, Self.parseTimestampToMs(syl.EndTime, fallback: sylStart + 300))
                         let rawToken = syl.Text
                         let trimmedToken = rawToken.trimmingCharacters(in: .whitespaces)
                         guard !trimmedToken.isEmpty else { continue }
@@ -975,11 +1123,11 @@ actor SpicyLyricsService {
                     // A line is word-synced if the song is word-synced, words are present,
                     // and multi-token lines have distinct start times (not artificially divided)
                     var effectiveWords = candidateWords
-                    let explicitLeadStart = lead.StartTime.map { max(0, Int($0 * 1000.0)) }
+                    let explicitLeadStart = lead.StartTime.map { Self.parseTimestampToMs($0, fallback: 0) }
                     if effectiveWords.isEmpty && !isSongLineSynced {
                         let tokens = lineText.split(whereSeparator: \.isWhitespace).map(String.init)
                         if tokens.count == 1, let singleWord = tokens.first, !singleWord.isEmpty {
-                            let wStart = explicitLeadStart ?? max(0, Int((contentLine.StartTime ?? 0.0) * 1000.0))
+                            let wStart = explicitLeadStart ?? Self.parseTimestampToMs(contentLine.StartTime, fallback: 0)
                             let wEnd = max(wStart + 500, endMs)
                             let duration = max(wEnd - wStart, 1)
                             let isLetterGroup = duration >= 1200 && singleWord.count > 1 && !singleWord.contains(" ")
@@ -1002,7 +1150,7 @@ actor SpicyLyricsService {
                                     text: singleWord,
                                     startMs: wStart,
                                     endMs: wEnd,
-                                    isPartOfWord: false,
+                                     isPartOfWord: false,
                                     isLetterGroup: isLetterGroup,
                                     letters: letters
                                 )
@@ -1015,7 +1163,7 @@ actor SpicyLyricsService {
                     let isIdenticalDurations = effectiveWords.count >= 3 && Set(durations).count == 1
                     let isTrulyWordSynced = !isSongLineSynced && !effectiveWords.isEmpty && distinctStarts && !isIdenticalDurations
 
-                    let actualStart = effectiveWords.first?.startMs ?? explicitLeadStart ?? max(0, Int((contentLine.StartTime ?? 0.0) * 1000.0))
+                    let actualStart = effectiveWords.first?.startMs ?? explicitLeadStart ?? Self.parseTimestampToMs(contentLine.StartTime, fallback: 0)
                     let actualEnd = effectiveWords.last?.endMs ?? max(actualStart + 500, endMs)
 
                     unitLeadLines.append(
@@ -1041,12 +1189,12 @@ actor SpicyLyricsService {
                 if let bgList = contentLine.Background {
                     for bg in bgList {
                         let baseLeadStart = unitLeadLines.first?.startMs ?? 0
-                        let bgStart = Int((bg.StartTime ?? Double(baseLeadStart) / 1000.0) * 1000.0)
+                        let bgStart = Self.parseTimestampToMs(bg.StartTime, fallback: baseLeadStart)
                         var bgWords: [LyricWord] = []
                         if let bgSyllables = bg.Syllables {
                             for (sylIndex, syl) in bgSyllables.enumerated() {
-                                let sStart = Int(syl.StartTime * 1000.0)
-                                let sEnd = Int(syl.EndTime * 1000.0)
+                                let sStart = Self.parseTimestampToMs(syl.StartTime, fallback: 0)
+                                let sEnd = max(sStart + 1, Self.parseTimestampToMs(syl.EndTime, fallback: sStart + 300))
                                 let rawToken = syl.Text
                                 let trimmedToken = rawToken.trimmingCharacters(in: .whitespaces)
                                 guard !trimmedToken.isEmpty else { continue }
@@ -1105,13 +1253,13 @@ actor SpicyLyricsService {
                             let bgTokens = bgText.split(whereSeparator: \.isWhitespace).map(String.init)
                             if bgTokens.count == 1, let singleBg = bgTokens.first, !singleBg.isEmpty {
                                 let bStart = bgStart
-                                let bEnd = bg.EndTime.map { Int($0 * 1000.0) } ?? (bStart + 1500)
+                                let bEnd = bg.EndTime.map { Self.parseTimestampToMs($0, fallback: bStart + 1500) } ?? (bStart + 1500)
                                 effectiveBgWords = [
                                     LyricWord(
                                         text: singleBg,
                                         startMs: bStart,
                                         endMs: bEnd,
-                                        isPartOfWord: false,
+                                         isPartOfWord: false,
                                         isLetterGroup: false,
                                         letters: []
                                     )
@@ -1121,7 +1269,7 @@ actor SpicyLyricsService {
 
                         if !effectiveBgWords.isEmpty || !bgText.isEmpty {
                             let actualStart = effectiveBgWords.first?.startMs ?? bgStart
-                            let actualEnd = bg.EndTime.map { Int($0 * 1000.0) } ?? effectiveBgWords.last?.endMs ?? actualStart
+                            let actualEnd = bg.EndTime.map { Self.parseTimestampToMs($0, fallback: actualStart) } ?? effectiveBgWords.last?.endMs ?? actualStart
                             let bgDurations = effectiveBgWords.map { $0.endMs - $0.startMs }
                             let bgIdentical = effectiveBgWords.count >= 3 && Set(bgDurations).count == 1
                             let bgDistinctStarts = effectiveBgWords.count > 1 ? Set(effectiveBgWords.map(\.startMs)).count > 1 : true

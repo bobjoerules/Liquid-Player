@@ -582,6 +582,9 @@ final class PlayerViewModel: ObservableObject {
         for key in nonSpicyKeys {
             lyricsCache.removeValue(forKey: key)
         }
+        if let currentId = currentLyricsTrackId, lyricsCache[currentId] == nil {
+            currentLyricsTrackId = nil
+        }
     }
 
     func disconnectSpicyLyrics() {
@@ -1210,7 +1213,7 @@ final class PlayerViewModel: ObservableObject {
         let targetId = track.id ?? track.uri?.replacingOccurrences(of: "spotify:track:", with: "")
         if let rawTrackId = targetId {
             let cleanId = rawTrackId.replacingOccurrences(of: "spotify:track:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleanId.isEmpty, cleanId != currentLyricsTrackId else { return }
+            guard !cleanId.isEmpty, (cleanId != currentLyricsTrackId || (self.lines.isEmpty && !self.isLoadingLyrics)) else { return }
             currentLyricsTrackId = cleanId
             hasPrefetchedForCurrentTrackEnding = false
 
@@ -1288,7 +1291,9 @@ final class PlayerViewModel: ObservableObject {
     func fetchLyricsForTrack(trackId: String, trackTitle: String) async {
         var cleanId = SpicyLyricsService.cleanTrackId(trackId)
         if cleanId.count != 22, spotifyService.isAuthenticated, !trackTitle.isEmpty {
-            let query = "\(trackTitle) \(nowPlayingArtist)".trimmingCharacters(in: .whitespacesAndNewlines)
+            let coreTitle = TrackMatchUtils.normalizeCoreTitle(trackTitle)
+            let searchTitle = coreTitle.isEmpty ? trackTitle : coreTitle
+            let query = "\(searchTitle) \(nowPlayingArtist)".trimmingCharacters(in: .whitespacesAndNewlines)
             if let match = (await spotifyService.searchTracks(query: query)).first {
                 if let resolvedId = match.id ?? match.uri {
                     let candidate = SpicyLyricsService.cleanTrackId(resolvedId)
@@ -1367,6 +1372,37 @@ final class PlayerViewModel: ObservableObject {
             #if DEBUG
             print("[PlayerViewModel] Primary Spicy Lyrics request failed for \(cleanId): \(error.localizedDescription)")
             #endif
+        }
+
+        // 3b. Fallback candidate search for Spicy Lyrics:
+        // Deluxes, remasters, and singles often have distinct 22-char track IDs that 404 in Spicy Lyrics,
+        // while the canonical track ID in Spicy Lyrics contains full synchronized lyrics.
+        if spotifyService.isAuthenticated && !trackTitle.isEmpty {
+            let coreTitle = TrackMatchUtils.normalizeCoreTitle(trackTitle)
+            let searchTitle = coreTitle.isEmpty ? trackTitle : coreTitle
+            let query = "\(searchTitle) \(nowPlayingArtist)".trimmingCharacters(in: .whitespacesAndNewlines)
+            let candidates = await spotifyService.searchTracks(query: query)
+            for candidateTrack in candidates.prefix(4) {
+                guard let candidateRaw = candidateTrack.id ?? candidateTrack.uri else { continue }
+                let candidateId = SpicyLyricsService.cleanTrackId(candidateRaw)
+                guard candidateId.count == 22, candidateId != cleanId else { continue }
+
+                if TrackMatchUtils.titlesMatch(requested: trackTitle, candidate: candidateTrack.name) {
+                    if let altParsed = try? await SpicyLyricsService.shared.fetchLyrics(for: candidateId), !altParsed.lines.isEmpty {
+                        self.lyricsCache[cleanId] = altParsed
+                        self.lyricsCache[candidateId] = altParsed
+                        self.setLyricsLines(altParsed.lines)
+                        self.isLoadingLyrics = false
+                        self.updateLyricsStatus(from: altParsed)
+                        self.lyricsSource = altParsed.source ?? "Spicy Lyrics"
+                        self.lyricsAttribution = altParsed.attribution
+                        self.lyricsSongwriters = altParsed.songwriters
+                        self.authorMetadata = nowPlayingArtist
+                        LibraryManager.shared.saveLyrics(for: cleanId, parsed: altParsed, track: spotifyService.currentTrack)
+                        return
+                    }
+                }
+            }
         }
 
         // 4. Use saved fallback if live Spicy Lyrics had no lyrics

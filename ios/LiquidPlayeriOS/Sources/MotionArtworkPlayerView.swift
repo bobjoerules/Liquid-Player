@@ -171,6 +171,8 @@ final class MotionPlayerContainerView: UIView {
         if !preservePlaceholder {
             placeholderImageView.image = nil
             placeholderImageView.alpha = 1.0
+        } else {
+            placeholderImageView.alpha = 1.0
         }
     }
 

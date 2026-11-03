@@ -314,12 +314,14 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
             if agent == "v1" || agent == "1" {
                 defaultAgent = agent
             }
+            let isParagraphBackground = isBackgroundRole(attributeDict["role"] ?? attributeDict["ttm:role"])
             currentParagraph = ParagraphState(
                 beginMs: parseTimeMs(attributeDict["begin"]) ?? 0,
                 endMs: parseTimeMs(attributeDict["end"]) ?? 0,
                 agent: agent,
                 defaultAgent: defaultAgent ?? "v1",
-                agentOrder: agentOrder
+                agentOrder: agentOrder,
+                isBackground: isParagraphBackground
             )
         case "span":
             let spanAgent = attributeDict["agent"] ?? attributeDict["ttm:agent"]
@@ -385,7 +387,17 @@ private final class ParserDelegate: NSObject, XMLParserDelegate {
                 let leadLines = pLines.filter { !$0.isBackground }
                 let bgLines = pLines.filter { $0.isBackground }
                 if !leadLines.isEmpty || !bgLines.isEmpty {
-                    vocalUnits.append(VocalUnit(leadLines: leadLines, backgroundLines: bgLines))
+                    if leadLines.isEmpty, !bgLines.isEmpty, let lastIndex = vocalUnits.indices.last {
+                        let prevUnit = vocalUnits[lastIndex]
+                        let bgStart = bgLines.map(\.startMs).min() ?? 0
+                        if bgStart >= prevUnit.startMs - 500 && bgStart <= prevUnit.endMs + 1500 {
+                            vocalUnits[lastIndex].backgroundLines.append(contentsOf: bgLines)
+                        } else {
+                            vocalUnits.append(VocalUnit(leadLines: leadLines, backgroundLines: bgLines))
+                        }
+                    } else {
+                        vocalUnits.append(VocalUnit(leadLines: leadLines, backgroundLines: bgLines))
+                    }
                 }
             }
             currentParagraph = nil
@@ -425,13 +437,20 @@ private struct ParagraphState {
     private var backgroundHadWhitespace = true
     private var pendingText = ""
 
-    init(beginMs: Int, endMs: Int, agent: String?, defaultAgent: String?, agentOrder: [String] = []) {
+    init(beginMs: Int, endMs: Int, agent: String?, defaultAgent: String?, agentOrder: [String] = [], isBackground: Bool = false) {
         self.beginMs = beginMs
         self.endMs = endMs
         self.agent = agent
         self.defaultAgent = defaultAgent
         self.agentOrder = agentOrder
-        self.stack = [ParserDelegate.SpanContext(begin: beginMs, end: endMs, hasExplicitTiming: false, isBackground: false, isTranslation: false, isRoman: false)]
+        self.inBackgroundSpan = isBackground
+        if isBackground {
+            self.currentBackgroundDraft = LineDraft()
+            self.leadLines = []
+        } else {
+            self.leadLines = [LineDraft()]
+        }
+        self.stack = [ParserDelegate.SpanContext(begin: beginMs, end: endMs, hasExplicitTiming: false, isBackground: isBackground, isTranslation: false, isRoman: false)]
     }
 
     mutating func pushSpan(attributes: [String: String]) {
@@ -448,9 +467,9 @@ private struct ParagraphState {
         let begin = parseTimeMs(attributes["begin"]) ?? inherited.begin
         let end = parseTimeMs(attributes["end"]) ?? inherited.end
         let role = attributes["role"] ?? attributes["ttm:role"]
-        let isBackground = role == "x-bg" || inherited.isBackground
-        let isTranslation = role == "x-translation" || inherited.isTranslation
-        let isRoman = role == "x-roman" || inherited.isRoman
+        let isBackground = isBackgroundRole(role) || inherited.isBackground
+        let isTranslation = isTranslationRole(role) || inherited.isTranslation
+        let isRoman = isRomanizationRole(role) || inherited.isRoman
 
         if isBackground && currentBackgroundDraft == nil {
             currentBackgroundDraft = LineDraft()
@@ -897,6 +916,29 @@ private struct ParagraphState {
     }
 }
 
+private func isBackgroundRole(_ rawRole: String?) -> Bool {
+    guard let role = rawRole?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !role.isEmpty else {
+        return false
+    }
+    return role == "x-bg" || role == "background" || role == "bg" || role == "x-background" ||
+           role.hasSuffix(":background") || role.hasSuffix("-bg") || role.hasSuffix(":x-bg") ||
+           role.contains("background") || role.contains("x-bg")
+}
+
+private func isTranslationRole(_ rawRole: String?) -> Bool {
+    guard let role = rawRole?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !role.isEmpty else {
+        return false
+    }
+    return role == "x-translation" || role == "translation" || role.contains("translation")
+}
+
+private func isRomanizationRole(_ rawRole: String?) -> Bool {
+    guard let role = rawRole?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !role.isEmpty else {
+        return false
+    }
+    return role == "x-roman" || role == "romanization" || role == "transliteration" || role.contains("roman") || role.contains("translit")
+}
+
 private func parseTimeMs(_ time: String?) -> Int? {
     guard let time else {
         return nil
@@ -1008,7 +1050,8 @@ enum TTMLExporter {
             let start = formatTime(ms: line.startMs)
             let end = formatTime(ms: line.endMs)
             let agentAttr = line.agent.map { " agent=\"\(xmlEscape($0))\"" } ?? ""
-            let backgroundAttr = line.isBackground ? " ttm:role=\"background\"" : ""
+            let backgroundAttr = line.isBackground ? " ttm:role=\"x-bg\"" : ""
+            let spanBgAttr = line.isBackground ? " ttm:role=\"x-bg\"" : ""
 
             let isStaticLine = line.isStatic || (line.startMs == 0 && (line.lineEndMs == nil || line.lineEndMs == 0))
             if isStaticLine {
@@ -1023,10 +1066,10 @@ enum TTMLExporter {
                     let wEnd = formatTime(ms: word.endMs)
                     let isLast = wIndex == line.words.count - 1
                     let trailing = (!isLast && !word.isPartOfWord && !word.text.hasSuffix("-")) ? " " : ""
-                    xml += "        <span begin=\"\(wStart)\" end=\"\(wEnd)\">\(xmlEscape(word.text))\(trailing)</span>\n"
+                    xml += "        <span begin=\"\(wStart)\" end=\"\(wEnd)\"\(spanBgAttr)>\(xmlEscape(word.text))\(trailing)</span>\n"
                 }
             } else {
-                xml += "        <span>\(xmlEscape(line.displayText))</span>\n"
+                xml += "        <span\(spanBgAttr)>\(xmlEscape(line.displayText))</span>\n"
             }
 
             if let trans = line.translation, !trans.isEmpty {

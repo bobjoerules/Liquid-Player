@@ -1966,7 +1966,16 @@ private struct PlayerBackgroundView: View {
 
                         // 2. High-vibrancy blurred artwork (or motion artwork)
                         ZStack {
-                            if let artwork {
+                            if let motionURL {
+                                MotionArtworkPlayerView(streamURL: motionURL, placeholder: artwork)
+                                    .frame(width: size.width, height: size.height)
+                                    .scaleEffect(1.30)
+                                    .blur(radius: max(0, blurRadius - 5))
+                                    .saturation(1.15)
+                                    .contrast(1.02)
+                                    .opacity(isLight ? 0.35 : 0.50)
+                                    .clipped()
+                            } else if let artwork {
                                 Image(uiImage: artwork)
                                     .resizable()
                                     .scaledToFill()
@@ -1977,17 +1986,7 @@ private struct PlayerBackgroundView: View {
                                     .contrast(1.02)
                                     .opacity(isLight ? 0.35 : 0.50)
                                     .clipped()
-                            }
-                            if let motionURL {
-                                MotionArtworkPlayerView(streamURL: motionURL, placeholder: artwork)
-                                    .frame(width: size.width, height: size.height)
-                                    .scaleEffect(1.30)
-                                    .blur(radius: max(0, blurRadius - 5))
-                                    .saturation(1.15)
-                                    .contrast(1.02)
-                                    .opacity(isLight ? 0.35 : 0.50)
-                                    .clipped()
-                            } else if artwork == nil {
+                            } else {
                                 LinearGradient(
                                     colors: isLight
                                         ? [Color(red: 0.94, green: 0.95, blue: 0.98), Color(uiColor: .systemBackground)]
@@ -2087,30 +2086,15 @@ private struct MotionArtworkBackgroundView: View {
                     endPoint: .bottomTrailing
                 )
 
-                // High-vibrancy motion video with artwork underlay
-                ZStack {
-                    if let artwork {
-                        Image(uiImage: artwork)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: size.width, height: size.height)
-                            .scaleEffect(1.30)
-                            .blur(radius: max(0, blurRadius - 10))
-                            .saturation(1.15)
-                            .contrast(1.02)
-                            .opacity(isLight ? 0.38 : 0.52)
-                            .clipped()
-                    }
-
-                    MotionArtworkPlayerView(streamURL: motionURL, placeholder: artwork)
-                        .frame(width: size.width, height: size.height)
-                        .scaleEffect(1.30)
-                        .blur(radius: max(0, blurRadius - 10))
-                        .saturation(1.15)
-                        .contrast(1.02)
-                        .opacity(isLight ? 0.38 : 0.52)
-                        .clipped()
-                }
+                // High-vibrancy motion video
+                MotionArtworkPlayerView(streamURL: motionURL, placeholder: artwork)
+                    .frame(width: size.width, height: size.height)
+                    .scaleEffect(1.30)
+                    .blur(radius: max(0, blurRadius - 10))
+                    .saturation(1.15)
+                    .contrast(1.02)
+                    .opacity(isLight ? 0.38 : 0.52)
+                    .clipped()
 
                 // Protective scrim
                 Rectangle()
@@ -2895,7 +2879,7 @@ struct SettingsView: View {
                 HStack {
                     Text("Version")
                     Spacer()
-                    Text("\((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.1.5") (Beta)")
+                    Text("\((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.1.9") (Beta)")
                         .foregroundStyle(.secondary)
                 }
                 HStack {
